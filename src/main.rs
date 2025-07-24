@@ -1,36 +1,41 @@
-use std::{fs, path::PathBuf};
+use std::time::Duration;
 
-use clap::Parser;
-use serde::Deserialize;
+use futures::StreamExt;
+use libp2p::{noise, ping, swarm::SwarmEvent, tcp, yamux, Multiaddr};
+use tracing_subscriber::EnvFilter;
 
-#[derive(Parser)]
-#[command(version, about)]
-struct Cli {
-    /// Config TOML file
-    pub config: PathBuf,
-}
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env())
+        .try_init();
 
-/// Config TOML
-#[derive(Deserialize)]
-pub struct Config {
-    addresses: Addresses,
-}
+    let mut swarm = libp2p::SwarmBuilder::with_new_identity()
+        .with_tokio()
+        .with_tcp(
+            tcp::Config::new(),
+            noise::Config::new,
+            yamux::Config::default,
+        )?
+        .with_behaviour(|_| ping::Behaviour::default())?
+        .with_swarm_config(|cfg| cfg.with_idle_connection_timeout(Duration::from_secs(u64::MAX)))
+        .build();
 
-/// Secret Addresses
-#[derive(Deserialize)]
-struct Addresses {
-    execution_pk: String,
-    validation_pk: String,
-}
+    swarm.listen_on("/ip4/0.0.0.0/tcp/0".parse()?)?;
 
-fn main() -> anyhow::Result<()> {
-    let cli = Cli::parse();
+    if let Some(addr) = std::env::args().nth(1) {
+        let remote: Multiaddr = addr.parse()?;
+        swarm.dial(remote)?;
+        println!("Dialed {addr}");
+    }
 
-    let raw_config = fs::read_to_string(cli.config)?;
-
-    let config: Config = toml::from_str(&raw_config)?;
-
-    println!("{}", config.addresses.execution_pk);
+    loop {
+        match swarm.select_next_some().await {
+            SwarmEvent::NewListenAddr { address, .. } => println!("Listening on {address:?}"),
+            SwarmEvent::Behaviour(event) => println!("{event:?}"),
+            _ => {}
+        }
+    }
 
     Ok(())
 }
