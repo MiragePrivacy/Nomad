@@ -5,6 +5,7 @@ use std::{
 
 use alloy::providers::{Provider, ProviderBuilder, WsConnect};
 use futures::StreamExt;
+use jsonrpsee::{core::async_trait, proc_macros::rpc, server::Server};
 use libp2p::{
     gossipsub, noise,
     swarm::{NetworkBehaviour, SwarmEvent},
@@ -12,6 +13,22 @@ use libp2p::{
 };
 use tokio::{sync::mpsc, time::sleep};
 use tracing_subscriber::EnvFilter;
+
+#[rpc(server, namespace = "mirage")]
+pub trait MirageRpc {
+    #[method(name = "signal")]
+    async fn signal(&self, message: String) -> String;
+}
+
+struct MirageServer;
+
+#[async_trait]
+impl MirageRpcServer for MirageServer {
+    async fn signal(&self, message: String) -> String {
+        println!("Received signal: {}", message);
+        format!("ack: {}", message)
+    }
+}
 
 #[macro_export]
 macro_rules! log_now {
@@ -41,7 +58,15 @@ pub struct GossipBehavior {
     pub gossipsub: gossipsub::Behaviour,
 }
 
-fn spawn_mock_block_source(tx: mpsc::UnboundedSender<u64>) {
+async fn spawn_rpc_server(tx: mpsc::UnboundedSender<u64>) -> anyhow::Result<()> {
+    let server = Server::builder().build("127.0.0.1:0").await?;
+    let server_addr = server.local_addr()?;
+    let rpc_server = server.start(MirageServer.into_rpc());
+    
+    println!("Running rpc on {server_addr}");
+    
+    tokio::spawn(rpc_server.stopped());
+    
     tokio::spawn(async move {
         let rpc_url = std::env::var("RPC").expect("RPC environment variable must be set");
         let ws = WsConnect::new(rpc_url);
@@ -59,6 +84,7 @@ fn spawn_mock_block_source(tx: mpsc::UnboundedSender<u64>) {
             let _ = tx.send(block.number);
         }
     });
+    Ok(())
 }
 
 #[tokio::main]
@@ -110,7 +136,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let (tx, mut rx) = mpsc::unbounded_channel();
-    spawn_mock_block_source(tx);
+    let _ = spawn_rpc_server(tx).await;
 
     let mut highest_block: u64 = 0;
 
