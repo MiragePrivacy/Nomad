@@ -1,5 +1,4 @@
 use std::{
-    fmt::Display,
     hash::{DefaultHasher, Hash, Hasher},
     time::Duration,
 };
@@ -7,14 +6,11 @@ use std::{
 use alloy::providers::{Provider, ProviderBuilder, WsConnect};
 use futures::StreamExt;
 use libp2p::{
-    gossipsub, identity, noise,
+    gossipsub, noise,
     swarm::{NetworkBehaviour, SwarmEvent},
     tcp, yamux, Multiaddr,
 };
-use tokio::{
-    sync::mpsc,
-    time::{self, sleep},
-};
+use tokio::{sync::mpsc, time::sleep};
 use tracing_subscriber::EnvFilter;
 
 #[macro_export]
@@ -144,7 +140,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         // Turn the 8‑byte payload back into u64
                         let num = u64::from_be_bytes(message.data[..8].try_into().unwrap());
                         if num > highest_block {
-                            log_now!("Received gossipt to advance to block {num} from the current height of {}", highest_block);
+                            log_now!("Heard gossip: advance to block number {num} from the current height of {}", highest_block);
                             highest_block = num;    // accept progress
                         } // else silently ignore stale or duplicate heights
                     }
@@ -154,6 +150,4 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
-
-    Ok(())
 }
