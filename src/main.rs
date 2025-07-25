@@ -51,8 +51,8 @@ fn spawn_mock_block_source(tx: mpsc::UnboundedSender<u64>) {
         let ws = WsConnect::new(rpc_url);
         let provider = ProviderBuilder::new().connect_ws(ws).await.unwrap();
 
-        log_now!("⏳ Waiting 20 seconds for peers to connect...");
-        sleep(Duration::from_secs(20)).await;
+        log_now!("⏳ Waiting 5 seconds for peers to connect...");
+        sleep(Duration::from_secs(5)).await;
         log_now!("✅ Starting block publishing");
 
         let mut block_stream = provider.subscribe_blocks().await.unwrap().into_stream();
@@ -60,7 +60,6 @@ fn spawn_mock_block_source(tx: mpsc::UnboundedSender<u64>) {
 
         // Process each new block as it arrives
         while let Some(block) = block_stream.next().await {
-            log_now!("publishing block {}", block.number);
             let _ = tx.send(block.number);
         }
     });
@@ -145,8 +144,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         // Turn the 8‑byte payload back into u64
                         let num = u64::from_be_bytes(message.data[..8].try_into().unwrap());
                         if num > highest_block {
+                            log_now!("Received gossipt to advance to block {num} from the current height of {}", highest_block);
                             highest_block = num;    // accept progress
-                            log_now!("Advanced to block {num} from {:?}", message.source);
                         } // else silently ignore stale or duplicate heights
                     }
                 }
