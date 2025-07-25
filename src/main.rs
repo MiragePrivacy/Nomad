@@ -20,12 +20,15 @@ pub trait MirageRpc {
     async fn signal(&self, message: String) -> String;
 }
 
-struct MirageServer;
+struct MirageServer {
+    signal_tx: mpsc::UnboundedSender<String>,
+}
 
 #[async_trait]
 impl MirageRpcServer for MirageServer {
     async fn signal(&self, message: String) -> String {
-        println!("Received signal: {}", message);
+        log_now!("Received signal: {}", message);
+        let _ = self.signal_tx.send(message.clone());
         format!("ack: {}", message)
     }
 }
@@ -58,15 +61,18 @@ pub struct GossipBehavior {
     pub gossipsub: gossipsub::Behaviour,
 }
 
-async fn spawn_rpc_server(tx: mpsc::UnboundedSender<u64>) -> anyhow::Result<()> {
+async fn spawn_rpc_server(
+    signal_tx: mpsc::UnboundedSender<String>,
+    block_tx: mpsc::UnboundedSender<u64>,
+) -> anyhow::Result<()> {
     let server = Server::builder().build("127.0.0.1:0").await?;
     let server_addr = server.local_addr()?;
-    let rpc_server = server.start(MirageServer.into_rpc());
-    
+    let rpc_server = server.start(MirageServer { signal_tx }.into_rpc());
+
     println!("Running rpc on {server_addr}");
-    
+
     tokio::spawn(rpc_server.stopped());
-    
+
     tokio::spawn(async move {
         let rpc_url = std::env::var("RPC").expect("RPC environment variable must be set");
         let ws = WsConnect::new(rpc_url);
@@ -81,7 +87,7 @@ async fn spawn_rpc_server(tx: mpsc::UnboundedSender<u64>) -> anyhow::Result<()> 
 
         // Process each new block as it arrives
         while let Some(block) = block_stream.next().await {
-            let _ = tx.send(block.number);
+            let _ = block_tx.send(block.number);
         }
     });
     Ok(())
@@ -124,8 +130,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_swarm_config(|cfg| cfg.with_idle_connection_timeout(Duration::from_secs(u64::MAX)))
         .build();
 
-    let topic = gossipsub::IdentTopic::new("eth-blocks");
-    swarm.behaviour_mut().gossipsub.subscribe(&topic)?;
+    let block_topic = gossipsub::IdentTopic::new("eth-blocks");
+    swarm.behaviour_mut().gossipsub.subscribe(&block_topic)?;
+
+    let signal_topic = gossipsub::IdentTopic::new("mirage-signals");
+    swarm.behaviour_mut().gossipsub.subscribe(&signal_topic)?;
 
     swarm.listen_on("/ip4/0.0.0.0/tcp/0".parse()?)?;
 
@@ -135,40 +144,55 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         log_now!("Dialed {}", addr);
     }
 
-    let (tx, mut rx) = mpsc::unbounded_channel();
-    let _ = spawn_rpc_server(tx).await;
+    let (block_tx, mut block_rx) = mpsc::unbounded_channel();
+    let (signal_tx, mut signal_rx) = mpsc::unbounded_channel();
+    let _ = spawn_rpc_server(signal_tx, block_tx).await;
 
     let mut highest_block: u64 = 0;
 
     loop {
         tokio::select! {
-            // 1. external trigger: a new block height
-            Some(block) = rx.recv() => {
+            Some(block) = block_rx.recv() => {
                 if block > highest_block {
                     highest_block = block;
                     swarm
                         .behaviour_mut()
                         .gossipsub
-                        .publish(topic.clone(), block.to_be_bytes().to_vec())?;
+                        .publish(block_topic.clone(), block.to_be_bytes().to_vec())?;
                     log_now!("Published block {}", block);
                 } else {
                     log_now!("Ignored local trigger {} (already at {})", block, highest_block);
                 }
             }
 
-            // 2. libp2p swarm events
+            Some(signal) = signal_rx.recv() => {
+                swarm
+                    .behaviour_mut()
+                    .gossipsub
+                    .publish(signal_topic.clone(), signal.clone())?;
+                log_now!("Published signal {}", signal);
+            }
+
             event = swarm.select_next_some() => match event {
                 SwarmEvent::NewListenAddr { address, .. } =>
                     println!("Listening on {address:?}"),
 
                 SwarmEvent::Behaviour(GossipBehaviorEvent::Gossipsub(gossipsub::Event::Message { message, .. })) => {
-                    if message.data.len() == 8 {
-                        // Turn the 8‑byte payload back into u64
-                        let num = u64::from_be_bytes(message.data[..8].try_into().unwrap());
-                        if num > highest_block {
-                            log_now!("Heard gossip: advance to block number {num} from the current height of {}", highest_block);
-                            highest_block = num;    // accept progress
-                        } // else silently ignore stale or duplicate heights
+                    match message.topic {
+                        t if t == block_topic.hash() => {
+                            if message.data.len() == 8 {
+                                // Turn the 8‑byte payload back into u64
+                                let num = u64::from_be_bytes(message.data[..8].try_into().unwrap());
+                                if num > highest_block {
+                                    log_now!("Heard gossip: advance to block number {num} from the current height of {}", highest_block);
+                                    highest_block = num;    // accept progress
+                                } // else silently ignore stale or duplicate heights
+                            }
+                        }
+                        t if t == signal_topic.hash() => {
+                            log_now!("Just heard signal: {}", String::from_utf8(message.data)?)
+                        }
+                        _ => log_now!("UNRECOGNIZED MESSAGE")
                     }
                 }
 
