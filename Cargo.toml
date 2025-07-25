@@ -10,7 +10,8 @@ toml = "0.8.22"
 serde = { version = "1.0", features = ["derive"] }
 libp2p = { version = "0.56", features = [
     "noise",
-    "ping",
+    "gossipsub",
+    "macros",
     "tcp",
     "tokio",
     "yamux",
@@ -18,3 +19,4 @@ libp2p = { version = "0.56", features = [
 tokio = { version = "1.46.0", features = ["full"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 futures = "0.3.30"
+alloy = "1.0.23"
