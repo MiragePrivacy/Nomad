@@ -1,13 +1,44 @@
-use std::{fmt::Display, hash::{DefaultHasher, Hash, Hasher}, time::Duration};
+use std::{
+    fmt::Display,
+    hash::{DefaultHasher, Hash, Hasher},
+    time::Duration,
+};
 
+use alloy::providers::{Provider, ProviderBuilder, WsConnect};
 use futures::StreamExt;
 use libp2p::{
     gossipsub, identity, noise,
     swarm::{NetworkBehaviour, SwarmEvent},
     tcp, yamux, Multiaddr,
 };
-use tokio::{sync::mpsc, time::{self, sleep}};
+use tokio::{
+    sync::mpsc,
+    time::{self, sleep},
+};
 use tracing_subscriber::EnvFilter;
+
+#[macro_export]
+macro_rules! log_now {
+    // --- format string only ----------------------------------------
+    ($fmt:expr) => {{
+        use chrono::Local;
+        println!(
+            "[{}] {}",
+            Local::now().format("%d-%m-%Y %H:%M:%S"),
+            $fmt
+        );
+    }};
+
+    // --- format string + more expressions -------------------------
+    ($fmt:expr, $($arg:expr),*) => {{
+        use chrono::Local;
+        println!(
+            "[{}] {}",
+            Local::now().format("%d-%m-%Y %H:%M:%S"),
+            format!($fmt, $($arg),*)
+        );
+    }};
+}
 
 #[derive(NetworkBehaviour)]
 pub struct GossipBehavior {
@@ -16,18 +47,29 @@ pub struct GossipBehavior {
 
 fn spawn_mock_block_source(tx: mpsc::UnboundedSender<u64>) {
     tokio::spawn(async move {
-        let mut n = 0_u64;
-        loop {
-            sleep(tokio::time::Duration::from_secs(12)).await;
-            n += 1;
-            log(format!("publishing block {n}"));
-            let _ = tx.send(n);
+        let rpc_url = std::env::var("RPC").expect("RPC environment variable must be set");
+        let ws = WsConnect::new(rpc_url);
+        let provider = ProviderBuilder::new().connect_ws(ws).await.unwrap();
+
+        log_now!("⏳ Waiting 20 seconds for peers to connect...");
+        sleep(Duration::from_secs(20)).await;
+        log_now!("✅ Starting block publishing");
+
+        let mut block_stream = provider.subscribe_blocks().await.unwrap().into_stream();
+        log_now!("🔄 Monitoring for new blocks...");
+
+        // Process each new block as it arrives
+        while let Some(block) = block_stream.next().await {
+            log_now!("publishing block {}", block.number);
+            let _ = tx.send(block.number);
         }
     });
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    dotenvy::dotenv().ok();
+
     let _ = tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
         .try_init();
@@ -47,7 +89,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let mut h = DefaultHasher::new();
                     message.data.hash(&mut h);
                     gossipsub::MessageId::from(h.finish().to_string())
-                })            
+                })
                 .build()
                 .expect("Failed to make the gossipsub conf");
 
@@ -69,7 +111,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(addr) = std::env::args().nth(1) {
         let remote: Multiaddr = addr.parse()?;
         swarm.dial(remote)?;
-        println!("Dialed {addr}");
+        log_now!("Dialed {}", addr);
     }
 
     let (tx, mut rx) = mpsc::unbounded_channel();
@@ -87,9 +129,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .behaviour_mut()
                         .gossipsub
                         .publish(topic.clone(), block.to_be_bytes().to_vec())?;
-                    log(format!("Published block {block}"));
+                    log_now!("Published block {}", block);
                 } else {
-                    log(format!("Ignored local trigger {block} (already at {highest_block})"));
+                    log_now!("Ignored local trigger {} (already at {})", block, highest_block);
                 }
             }
 
@@ -104,7 +146,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let num = u64::from_be_bytes(message.data[..8].try_into().unwrap());
                         if num > highest_block {
                             highest_block = num;    // accept progress
-                            log(format!("Advanced to block {num} from {:?}", message.source));
+                            log_now!("Advanced to block {num} from {:?}", message.source);
                         } // else silently ignore stale or duplicate heights
                     }
                 }
@@ -115,8 +157,4 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
-}
-
-fn log<S: Display + AsRef<str>>(s: S) {
-    println!("[{:?}] {s}", time::Instant::now());
 }
