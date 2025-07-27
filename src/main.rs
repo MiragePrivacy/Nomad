@@ -214,11 +214,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             Some(signal) = signal_rx.recv() => {
-                swarm
+                match swarm
                     .behaviour_mut()
                     .gossipsub
-                    .publish(signal_topic.clone(), serde_json::to_vec(&signal)?)?;
-                log_now!("Published signal {}", signal);
+                    .publish(signal_topic.clone(), serde_json::to_vec(&signal)?) {
+                    Ok(_) => log_now!("Published signal {}", signal),
+                    Err(gossipsub::PublishError::Duplicate) => {
+                        log_now!("Signal already published (duplicate): {}", signal);
+                    }
+                    Err(e) => return Err(e.into()),
+                }
             }
 
             event = swarm.select_next_some() => match event {

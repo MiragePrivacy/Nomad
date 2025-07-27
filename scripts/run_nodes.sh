@@ -92,6 +92,6 @@ done
 # ------------------------------------------------------------
 # 8. Clean shutdown on Ctrl‑C
 # ------------------------------------------------------------
-trap 'echo; echo "[runner] stopping…"; kill ${PIDS[@]} 2>/dev/null; wait; rm -f "$LOG1"' INT TERM
+trap 'echo; echo "[runner] stopping…"; kill ${PIDS[@]} 2>/dev/null; wait ${PIDS[@]} 2>/dev/null; rm -f "$LOG1"; exit 0' INT TERM
 
 wait
