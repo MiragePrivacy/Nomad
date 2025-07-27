@@ -24,10 +24,10 @@ use tracing_subscriber::EnvFilter;
 struct Args {
     #[arg(short, long, help = "Port for the RPC server")]
     rpc_port: Option<u16>,
-    
+
     #[arg(short, long, help = "Port for the P2P node")]
     p2p_port: Option<u16>,
-    
+
     #[arg(help = "Multiaddr of a peer to connect to")]
     peer: Option<String>,
 }
@@ -104,7 +104,7 @@ async fn spawn_rpc_server(
     rpc_port: Option<u16>,
 ) -> anyhow::Result<()> {
     let addr = match rpc_port {
-        Some(port) => format!("127.0.0.1:{}", port),
+        Some(port) => format!("127.0.0.1:{port}"),
         None => "127.0.0.1:0".to_string(),
     };
     let server = Server::builder().build(addr).await?;
@@ -138,7 +138,7 @@ async fn spawn_rpc_server(
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
-    
+
     dotenvy::dotenv().ok();
 
     let _ = tracing_subscriber::fmt()
@@ -181,7 +181,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     swarm.behaviour_mut().gossipsub.subscribe(&signal_topic)?;
 
     let p2p_addr = match args.p2p_port {
-        Some(port) => format!("/ip4/0.0.0.0/tcp/{}", port),
+        Some(port) => format!("/ip4/0.0.0.0/tcp/{port}"),
         None => "/ip4/0.0.0.0/tcp/0".to_string(),
     };
     swarm.listen_on(p2p_addr.parse()?)?;
