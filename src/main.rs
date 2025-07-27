@@ -3,7 +3,10 @@ use std::{
     time::Duration,
 };
 
-use alloy::providers::{Provider, ProviderBuilder, WsConnect};
+use alloy::{
+    primitives::{Address, U256},
+    providers::{Provider, ProviderBuilder, WsConnect},
+};
 use futures::StreamExt;
 use jsonrpsee::{core::async_trait, proc_macros::rpc, server::Server};
 use libp2p::{
@@ -11,22 +14,42 @@ use libp2p::{
     swarm::{NetworkBehaviour, SwarmEvent},
     tcp, yamux, Multiaddr,
 };
+use serde::{Deserialize, Serialize};
 use tokio::{sync::mpsc, time::sleep};
 use tracing_subscriber::EnvFilter;
+
+#[derive(Deserialize, Serialize, Clone)]
+pub struct Signal {
+    escrow_contract: Address,
+    token_contract: Address,
+    recipient: Address,
+    transfer_amount: U256,
+    reward_amount: U256,
+}
+
+impl std::fmt::Display for Signal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "send {} tokens to {} and collect {} tokens from escrow {}",
+            self.transfer_amount, self.recipient, self.reward_amount, self.escrow_contract
+        )
+    }
+}
 
 #[rpc(server, namespace = "mirage")]
 pub trait MirageRpc {
     #[method(name = "signal")]
-    async fn signal(&self, message: String) -> String;
+    async fn signal(&self, message: Signal) -> String;
 }
 
 struct MirageServer {
-    signal_tx: mpsc::UnboundedSender<String>,
+    signal_tx: mpsc::UnboundedSender<Signal>,
 }
 
 #[async_trait]
 impl MirageRpcServer for MirageServer {
-    async fn signal(&self, message: String) -> String {
+    async fn signal(&self, message: Signal) -> String {
         log_now!("Received signal: {}", message);
         let _ = self.signal_tx.send(message.clone());
         format!("ack: {}", message)
@@ -62,7 +85,7 @@ pub struct GossipBehavior {
 }
 
 async fn spawn_rpc_server(
-    signal_tx: mpsc::UnboundedSender<String>,
+    signal_tx: mpsc::UnboundedSender<Signal>,
     block_tx: mpsc::UnboundedSender<u64>,
 ) -> anyhow::Result<()> {
     let server = Server::builder().build("127.0.0.1:0").await?;
@@ -169,7 +192,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 swarm
                     .behaviour_mut()
                     .gossipsub
-                    .publish(signal_topic.clone(), signal.clone())?;
+                    .publish(signal_topic.clone(), serde_json::to_vec(&signal)?)?;
                 log_now!("Published signal {}", signal);
             }
 

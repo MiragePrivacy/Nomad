@@ -3886,6 +3886,7 @@ dependencies = [
  "jsonrpsee",
  "libp2p",
  "serde",
+ "serde_json",
  "tokio",
  "toml",
  "tracing-subscriber",
