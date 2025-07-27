@@ -31,7 +31,7 @@ colors=(32 34 33 35 36 31 37)  # green, blue, yellow, magenta, cyan, red, white
 RPC_PORT_1=$((RPC_START_PORT))
 P2P_PORT_1=$((P2P_START_PORT))
 echo "[runner] Node 1: RPC port $RPC_PORT_1, P2P port $P2P_PORT_1"
-stdbuf -oL "$BIN" --rpc-port "$RPC_PORT_1" --p2p-port "$P2P_PORT_1" \
+stdbuf -oL env RUST_LOG=nomad=debug "$BIN" --rpc-port "$RPC_PORT_1" --p2p-port "$P2P_PORT_1" \
   > >(tee "$LOG1" | sed -u "s/^/\x1b[${colors[0]}mNode 1:\x1b[0m /") 2>&1 &
 PIDS[1]=$!
 RPC_PORTS[1]=$RPC_PORT_1
@@ -58,7 +58,7 @@ for ((i=2; i<=NODE_COUNT; i++)); do
   RPC_PORT=$((RPC_START_PORT + i - 1))
   P2P_PORT=$((P2P_START_PORT + i - 1))
   echo "[runner] Node $i: RPC port $RPC_PORT, P2P port $P2P_PORT"
-  stdbuf -oL "$BIN" --rpc-port "$RPC_PORT" --p2p-port "$P2P_PORT" "$IDENT" \
+  stdbuf -oL env RUST_LOG=nomad=debug "$BIN" --rpc-port "$RPC_PORT" --p2p-port "$P2P_PORT" "$IDENT" \
     | sed -u "s/^/\x1b[${colors[$color_idx]}mNode $i:\x1b[0m /" &
   PIDS[$i]=$!
   RPC_PORTS[$i]=$RPC_PORT

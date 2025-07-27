@@ -17,6 +17,7 @@ use libp2p::{
 };
 use serde::{Deserialize, Serialize};
 use tokio::{sync::mpsc, time::sleep};
+use tracing::{info, warn, debug, instrument};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
@@ -64,40 +65,19 @@ struct MirageServer {
 #[async_trait]
 impl MirageRpcServer for MirageServer {
     async fn signal(&self, message: Signal) -> String {
-        log_now!("Received signal: {}", message);
+        info!(signal = %message, "Received signal");
         let _ = self.signal_tx.send(message.clone());
         format!("ack: {}", message)
     }
 }
 
-#[macro_export]
-macro_rules! log_now {
-    // --- format string only ----------------------------------------
-    ($fmt:expr) => {{
-        use chrono::Local;
-        println!(
-            "[{}] {}",
-            Local::now().format("%d-%m-%Y %H:%M:%S"),
-            $fmt
-        );
-    }};
-
-    // --- format string + more expressions -------------------------
-    ($fmt:expr, $($arg:expr),*) => {{
-        use chrono::Local;
-        println!(
-            "[{}] {}",
-            Local::now().format("%d-%m-%Y %H:%M:%S"),
-            format!($fmt, $($arg),*)
-        );
-    }};
-}
 
 #[derive(NetworkBehaviour)]
 pub struct GossipBehavior {
     pub gossipsub: gossipsub::Behaviour,
 }
 
+#[instrument(skip(signal_tx, block_tx))]
 async fn spawn_rpc_server(
     signal_tx: mpsc::UnboundedSender<Signal>,
     block_tx: mpsc::UnboundedSender<u64>,
@@ -120,12 +100,12 @@ async fn spawn_rpc_server(
         let ws = WsConnect::new(rpc_url);
         let provider = ProviderBuilder::new().connect_ws(ws).await.unwrap();
 
-        log_now!("⏳ Waiting 5 seconds for peers to connect...");
+        info!("⏳ Waiting 5 seconds for peers to connect...");
         sleep(Duration::from_secs(5)).await;
-        log_now!("✅ Starting block publishing");
+        info!("✅ Starting block publishing");
 
         let mut block_stream = provider.subscribe_blocks().await.unwrap().into_stream();
-        log_now!("🔄 Monitoring for new blocks...");
+        info!("🔄 Monitoring for new blocks...");
 
         // Process each new block as it arrives
         while let Some(block) = block_stream.next().await {
@@ -136,6 +116,7 @@ async fn spawn_rpc_server(
 }
 
 #[tokio::main]
+#[instrument]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
@@ -189,7 +170,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(addr) = args.peer {
         let remote: Multiaddr = addr.parse()?;
         swarm.dial(remote)?;
-        log_now!("Dialed {}", addr);
+        info!(peer = %addr, "Dialed peer");
     }
 
     let (block_tx, mut block_rx) = mpsc::unbounded_channel();
@@ -207,9 +188,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .behaviour_mut()
                         .gossipsub
                         .publish(block_topic.clone(), block.to_be_bytes().to_vec())?;
-                    log_now!("Published block {}", block);
+                    info!(block = block, "Published block");
                 } else {
-                    log_now!("Ignored local trigger {} (already at {})", block, highest_block);
+                    debug!(block = block, highest_block = highest_block, "Ignored local trigger (already at higher block)");
                 }
             }
 
@@ -218,9 +199,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .behaviour_mut()
                     .gossipsub
                     .publish(signal_topic.clone(), serde_json::to_vec(&signal)?) {
-                    Ok(_) => log_now!("Published signal {}", signal),
+                    Ok(_) => info!(signal = %signal, "Published signal"),
                     Err(gossipsub::PublishError::Duplicate) => {
-                        log_now!("Signal already published (duplicate): {}", signal);
+                        debug!(signal = %signal, "Signal already published (duplicate)");
                     }
                     Err(e) => return Err(e.into()),
                 }
@@ -237,15 +218,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 // Turn the 8‑byte payload back into u64
                                 let num = u64::from_be_bytes(message.data[..8].try_into().unwrap());
                                 if num > highest_block {
-                                    log_now!("Heard gossip: advance to block number {num} from the current height of {}", highest_block);
+                                    info!(new_block = num, current_block = highest_block, "Heard gossip: advancing to new block");
                                     highest_block = num;    // accept progress
                                 } // else silently ignore stale or duplicate heights
                             }
                         }
                         t if t == signal_topic.hash() => {
-                            log_now!("Just heard signal: {}", String::from_utf8(message.data)?)
+                            info!(signal_data = ?String::from_utf8(message.data)?, "Received signal gossip")
                         }
-                        _ => log_now!("UNRECOGNIZED MESSAGE")
+                        _ => warn!("Received unrecognized message")
                     }
                 }
 
