@@ -7,6 +7,7 @@ use alloy::{
     primitives::{Address, U256},
     providers::{Provider, ProviderBuilder, WsConnect},
 };
+use clap::Parser;
 use futures::StreamExt;
 use jsonrpsee::{core::async_trait, proc_macros::rpc, server::Server};
 use libp2p::{
@@ -17,6 +18,19 @@ use libp2p::{
 use serde::{Deserialize, Serialize};
 use tokio::{sync::mpsc, time::sleep};
 use tracing_subscriber::EnvFilter;
+
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    #[arg(short, long, help = "Port for the RPC server")]
+    rpc_port: Option<u16>,
+    
+    #[arg(short, long, help = "Port for the P2P node")]
+    p2p_port: Option<u16>,
+    
+    #[arg(help = "Multiaddr of a peer to connect to")]
+    peer: Option<String>,
+}
 
 #[derive(Deserialize, Serialize, Clone)]
 pub struct Signal {
@@ -87,8 +101,13 @@ pub struct GossipBehavior {
 async fn spawn_rpc_server(
     signal_tx: mpsc::UnboundedSender<Signal>,
     block_tx: mpsc::UnboundedSender<u64>,
+    rpc_port: Option<u16>,
 ) -> anyhow::Result<()> {
-    let server = Server::builder().build("127.0.0.1:0").await?;
+    let addr = match rpc_port {
+        Some(port) => format!("127.0.0.1:{}", port),
+        None => "127.0.0.1:0".to_string(),
+    };
+    let server = Server::builder().build(addr).await?;
     let server_addr = server.local_addr()?;
     let rpc_server = server.start(MirageServer { signal_tx }.into_rpc());
 
@@ -118,6 +137,8 @@ async fn spawn_rpc_server(
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args = Args::parse();
+    
     dotenvy::dotenv().ok();
 
     let _ = tracing_subscriber::fmt()
@@ -159,9 +180,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let signal_topic = gossipsub::IdentTopic::new("mirage-signals");
     swarm.behaviour_mut().gossipsub.subscribe(&signal_topic)?;
 
-    swarm.listen_on("/ip4/0.0.0.0/tcp/0".parse()?)?;
+    let p2p_addr = match args.p2p_port {
+        Some(port) => format!("/ip4/0.0.0.0/tcp/{}", port),
+        None => "/ip4/0.0.0.0/tcp/0".to_string(),
+    };
+    swarm.listen_on(p2p_addr.parse()?)?;
 
-    if let Some(addr) = std::env::args().nth(1) {
+    if let Some(addr) = args.peer {
         let remote: Multiaddr = addr.parse()?;
         swarm.dial(remote)?;
         log_now!("Dialed {}", addr);
@@ -169,7 +194,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let (block_tx, mut block_rx) = mpsc::unbounded_channel();
     let (signal_tx, mut signal_rx) = mpsc::unbounded_channel();
-    let _ = spawn_rpc_server(signal_tx, block_tx).await;
+    let _ = spawn_rpc_server(signal_tx, block_tx, args.rpc_port).await;
 
     let mut highest_block: u64 = 0;
 
