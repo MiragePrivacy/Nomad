@@ -1,12 +1,15 @@
 use std::{
     hash::{DefaultHasher, Hash, Hasher},
+    sync::Arc,
     time::Duration,
 };
 
 use alloy::{
     primitives::{Address, U256},
     providers::{Provider, ProviderBuilder, WsConnect},
+    signers::local::PrivateKeySigner,
 };
+use anyhow::Context as _;
 use clap::Parser;
 use futures::StreamExt;
 use jsonrpsee::{core::async_trait, proc_macros::rpc, server::Server};
@@ -16,8 +19,8 @@ use libp2p::{
     tcp, yamux, Multiaddr,
 };
 use serde::{Deserialize, Serialize};
-use tokio::{sync::mpsc, time::sleep};
-use tracing::{info, warn, debug, instrument};
+use tokio::sync::mpsc;
+use tracing::{debug, info, instrument, warn};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
@@ -31,6 +34,12 @@ struct Args {
 
     #[arg(help = "Multiaddr of a peer to connect to")]
     peer: Option<String>,
+
+    #[arg(long, help = "Private key 1 to use ")]
+    pk1: Option<String>,
+
+    #[arg(long, help = "Private key 1 to use ")]
+    pk2: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Clone)]
@@ -71,16 +80,14 @@ impl MirageRpcServer for MirageServer {
     }
 }
 
-
 #[derive(NetworkBehaviour)]
 pub struct GossipBehavior {
     pub gossipsub: gossipsub::Behaviour,
 }
 
-#[instrument(skip(signal_tx, block_tx))]
+#[instrument(skip(signal_tx))]
 async fn spawn_rpc_server(
     signal_tx: mpsc::UnboundedSender<Signal>,
-    block_tx: mpsc::UnboundedSender<u64>,
     rpc_port: Option<u16>,
 ) -> anyhow::Result<()> {
     let addr = match rpc_port {
@@ -94,24 +101,6 @@ async fn spawn_rpc_server(
     println!("Running rpc on {server_addr}");
 
     tokio::spawn(rpc_server.stopped());
-
-    tokio::spawn(async move {
-        let rpc_url = std::env::var("RPC").expect("RPC environment variable must be set");
-        let ws = WsConnect::new(rpc_url);
-        let provider = ProviderBuilder::new().connect_ws(ws).await.unwrap();
-
-        info!("⏳ Waiting 5 seconds for peers to connect...");
-        sleep(Duration::from_secs(5)).await;
-        info!("✅ Starting block publishing");
-
-        let mut block_stream = provider.subscribe_blocks().await.unwrap().into_stream();
-        info!("🔄 Monitoring for new blocks...");
-
-        // Process each new block as it arrives
-        while let Some(block) = block_stream.next().await {
-            let _ = block_tx.send(block.number);
-        }
-    });
     Ok(())
 }
 
@@ -167,34 +156,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     swarm.listen_on(p2p_addr.parse()?)?;
 
-    if let Some(addr) = args.peer {
+    if let Some(ref addr) = args.peer {
         let remote: Multiaddr = addr.parse()?;
         swarm.dial(remote)?;
         info!(peer = %addr, "Dialed peer");
     }
 
-    let (block_tx, mut block_rx) = mpsc::unbounded_channel();
     let (signal_tx, mut signal_rx) = mpsc::unbounded_channel();
-    let _ = spawn_rpc_server(signal_tx, block_tx, args.rpc_port).await;
+    let _ = spawn_rpc_server(signal_tx, args.rpc_port).await;
 
     let mut highest_block: u64 = 0;
 
+    let rpc_url = std::env::var("RPC").expect("RPC environment variable must be set");
+    let ws = WsConnect::new(rpc_url);
+    let provider = Arc::new(
+        ProviderBuilder::new()
+            .connect_ws(ws)
+            .await
+            .context("connect ws")?,
+    );
+    let signers = Arc::new(build_signers(&args)?);
+
     loop {
         tokio::select! {
-            Some(block) = block_rx.recv() => {
-                if block > highest_block {
-                    highest_block = block;
-                    swarm
-                        .behaviour_mut()
-                        .gossipsub
-                        .publish(block_topic.clone(), block.to_be_bytes().to_vec())?;
-                    info!(block = block, "Published block");
-                } else {
-                    debug!(block = block, highest_block = highest_block, "Ignored local trigger (already at higher block)");
-                }
-            }
-
             Some(signal) = signal_rx.recv() => {
+                // publish with the network
                 match swarm
                     .behaviour_mut()
                     .gossipsub
@@ -204,6 +190,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         debug!(signal = %signal, "Signal already published (duplicate)");
                     }
                     Err(e) => return Err(e.into()),
+                }
+
+                if let Some((ref s1, ref s2)) = *signers {
+                    if let Err(e) = process_signal(&signal, provider.clone(), s1, s2).await {
+                        warn!(%e, "failed to process signal");
+                    }
+                } else {
+                    debug!("Skipping signal; running in read-only mode");
                 }
             }
 
@@ -224,7 +218,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                         }
                         t if t == signal_topic.hash() => {
-                            info!(signal_data = ?String::from_utf8(message.data)?, "Received signal gossip")
+                            match serde_json::from_slice::<Signal>(&message.data) {
+                                Ok(received_signal) => {
+                                    info!(signal = %received_signal, "Received signal gossip");
+                                    if let Some((ref s1, ref s2)) = *signers {
+                                        if let Err(e) = process_signal(&received_signal, provider.clone(), s1, s2).await {
+                                            warn!(%e, "failed to process signal");
+                                        }
+                                    } else {
+                                        debug!("Skipping signal; running in read-only mode");
+                                    }
+                                }
+                                Err(e) => {
+                                    warn!(%e, signal_data = ?String::from_utf8_lossy(&message.data), "Failed to parse received signal");
+                                }
+                            }
                         }
                         _ => warn!("Received unrecognized message")
                     }
@@ -233,5 +241,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 _ => {}
             }
         }
+    }
+}
+
+pub async fn process_signal<P: Provider>(
+    _signal: &Signal,
+    provider: Arc<P>,
+    signer1: &PrivateKeySigner,
+    _signer2: &PrivateKeySigner,
+) -> anyhow::Result<()> {
+    let addr1 = signer1.address();
+    let balance = provider.get_balance(addr1).await?;
+    info!(%balance, "current balance");
+    // …use signer2 and the signal…
+    Ok(())
+}
+
+fn build_signers(args: &Args) -> anyhow::Result<Option<(PrivateKeySigner, PrivateKeySigner)>> {
+    match (&args.pk1, &args.pk2) {
+        // both present → parse, fail fast if either is malformed
+        (Some(pk1), Some(pk2)) => {
+            let s1: PrivateKeySigner = pk1.parse().context("parsing --pk1")?;
+            let s2: PrivateKeySigner = pk2.parse().context("parsing --pk2")?;
+            info!("Using addresses: {} and {}", s1.address(), s2.address());
+            Ok(Some((s1, s2)))
+        }
+        // neither present → run in read-only mode
+        (None, None) => Ok(None),
+        // one present, one missing → treat as a configuration error
+        _ => anyhow::bail!("Supply *both* --pk1 and --pk2 or neither"),
     }
 }
