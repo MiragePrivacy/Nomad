@@ -5,11 +5,17 @@ set -euo pipefail
 # 1. Parse arguments and validate
 # ------------------------------------------------------------
 NODE_COUNT=${1:-2}
+shift # Remove first argument (node count) so remaining args can be passed to binary
+
 if ! [[ "$NODE_COUNT" =~ ^[0-9]+$ ]] || [ "$NODE_COUNT" -lt 1 ]; then
-  echo "Usage: $0 [node_count]"
+  echo "Usage: $0 [node_count] [additional_args...]"
   echo "  node_count: number of nodes to run (default: 2, minimum: 1)"
+  echo "  additional_args: arbitrary flags and arguments passed to each node"
   exit 1
 fi
+
+# Capture remaining arguments to pass to each binary call
+EXTRA_ARGS="$@"
 
 # ------------------------------------------------------------
 # 2. Load private keys from .env file
@@ -60,6 +66,11 @@ else
   echo "[runner] Node 1: RPC port $RPC_PORT_1, P2P port $P2P_PORT_1 (no keys)"
 fi
 
+# Add extra arguments to Node 1 command
+if [ -n "$EXTRA_ARGS" ]; then
+  NODE1_CMD="$NODE1_CMD $EXTRA_ARGS"
+fi
+
 setsid stdbuf -oL env RUST_LOG=nomad=debug $NODE1_CMD \
   > >(tee "$LOG1" | sed -u "s/^/\x1b[${colors[0]}mNode 1:\x1b[0m /") 2>&1 &
 PIDS[1]=$!
@@ -99,6 +110,11 @@ for ((i=2; i<=NODE_COUNT; i++)); do
     echo "[runner] Node $i: RPC port $RPC_PORT, P2P port $P2P_PORT (with keys)"
   else
     echo "[runner] Node $i: RPC port $RPC_PORT, P2P port $P2P_PORT (no keys)"
+  fi
+  
+  # Add extra arguments to this node's command
+  if [ -n "$EXTRA_ARGS" ]; then
+    NODE_CMD="$NODE_CMD $EXTRA_ARGS"
   fi
   
   setsid stdbuf -oL env RUST_LOG=nomad=debug $NODE_CMD \
