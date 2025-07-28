@@ -5,9 +5,11 @@ use std::{
 };
 
 use alloy::{
+    network::EthereumWallet,
     primitives::{Address, U256},
     providers::{Provider, ProviderBuilder, WsConnect},
     signers::local::PrivateKeySigner,
+    sol,
 };
 use anyhow::Context as _;
 use clap::Parser;
@@ -35,11 +37,23 @@ struct Args {
     #[arg(help = "Multiaddr of a peer to connect to")]
     peer: Option<String>,
 
-    #[arg(long, help = "Private key 1 to use ")]
+    #[arg(long, help = "Private key 1 to use")]
     pk1: Option<String>,
 
-    #[arg(long, help = "Private key 1 to use ")]
+    #[arg(long, help = "Private key 2 to use")]
     pk2: Option<String>,
+
+    #[arg(
+        long,
+        help = "Use the faucet functionality on the given token contract. For testing mode."
+    )]
+    faucet: Option<String>,
+
+    #[arg(long, help = "WebSocket RPC URL for reading blockchain data")]
+    ws_rpc: String,
+
+    #[arg(long, help = "HTTP RPC URL for sending transactions")]
+    http_rpc: String,
 }
 
 #[derive(Deserialize, Serialize, Clone)]
@@ -106,7 +120,7 @@ async fn spawn_rpc_server(
 
 #[tokio::main]
 #[instrument]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
     dotenvy::dotenv().ok();
@@ -167,15 +181,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut highest_block: u64 = 0;
 
-    let rpc_url = std::env::var("RPC").expect("RPC environment variable must be set");
-    let ws = WsConnect::new(rpc_url);
-    let provider = Arc::new(
+    // Setup WebSocket provider for reading operations
+
+    let ws = WsConnect::new(&args.ws_rpc);
+    let ws_provider = Arc::new(
         ProviderBuilder::new()
             .connect_ws(ws)
             .await
             .context("connect ws")?,
     );
+
+    // Setup HTTP provider for transaction sending
+    let http_provider = Arc::new(
+        ProviderBuilder::new()
+            .connect(&args.http_rpc)
+            .await
+            .context("connect http")?,
+    );
+
     let signers = Arc::new(build_signers(&args)?);
+
+    if let Some(token_contract) = args.faucet {
+        if let Some((ref s1, ref s2)) = *signers {
+            call_faucet(token_contract.parse()?, http_provider.clone(), s1, s2).await?;
+        }
+    }
 
     loop {
         tokio::select! {
@@ -193,9 +223,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
 
                 if let Some((ref s1, ref s2)) = *signers {
-                    if let Err(e) = process_signal(&signal, provider.clone(), s1, s2).await {
-                        warn!(%e, "failed to process signal");
-                    }
+                        if let Err(e) = process_signal(&signal, ws_provider.clone(), s1, s2).await {
+                            warn!(%e, "failed to process signal");
+                        }
                 } else {
                     debug!("Skipping signal; running in read-only mode");
                 }
@@ -222,9 +252,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 Ok(received_signal) => {
                                     info!(signal = %received_signal, "Received signal gossip");
                                     if let Some((ref s1, ref s2)) = *signers {
-                                        if let Err(e) = process_signal(&received_signal, provider.clone(), s1, s2).await {
-                                            warn!(%e, "failed to process signal");
-                                        }
+                                            if let Err(e) = process_signal(&received_signal, ws_provider.clone(), s1, s2).await {
+                                                warn!(%e, "failed to process signal");
+                                            }
                                     } else {
                                         debug!("Skipping signal; running in read-only mode");
                                     }
@@ -244,16 +274,69 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
+sol! {
+    #[sol(rpc)]
+    contract TokenContract {
+        function balanceOf(address) public view returns (uint256);
+        function mint() external;
+    }
+}
+
 pub async fn process_signal<P: Provider>(
-    _signal: &Signal,
+    signal: &Signal,
     provider: Arc<P>,
     signer1: &PrivateKeySigner,
-    _signer2: &PrivateKeySigner,
+    signer2: &PrivateKeySigner,
 ) -> anyhow::Result<()> {
-    let addr1 = signer1.address();
-    let balance = provider.get_balance(addr1).await?;
-    info!(%balance, "current balance");
-    // …use signer2 and the signal…
+    let addr_1 = signer1.address();
+    let ether_balance_1 = provider.get_balance(addr_1).await?;
+    let addr_2 = signer2.address();
+    let ether_balance_2 = provider.get_balance(addr_2).await?;
+    info!(%ether_balance_1, "current eth balance with address one");
+    info!(%ether_balance_2, "current eth balance with address two");
+
+    let token_contract = TokenContract::new(signal.token_contract, provider);
+    let usdt_balance_1 = token_contract.balanceOf(addr_1).call().await?;
+    let usdt_balance_2 = token_contract.balanceOf(addr_2).call().await?;
+    info!(%usdt_balance_1, "current usdt balance with address one");
+    info!(%usdt_balance_2, "current usdt balance with address two");
+    Ok(())
+}
+
+pub async fn call_faucet<P: Provider>(
+    token_addr: Address,
+    provider: Arc<P>,
+    signer1: &PrivateKeySigner,
+    signer2: &PrivateKeySigner,
+) -> anyhow::Result<()> {
+    info!("minting tokens.");
+    // ❶ Bundle both keys in a wallet.
+    let mut wallet = EthereumWallet::new(signer1.clone()); // default signer = signer1
+    wallet.register_signer(signer2.clone());
+
+    // ❸ Single contract handle reused for every sender.
+    // Create provider with wallet for transactions
+    let provider_with_wallet = ProviderBuilder::new()
+        .wallet(wallet)
+        .connect_provider(provider);
+
+    let token = TokenContract::new(token_addr, &provider_with_wallet);
+
+    // First mint → signed by signer‑1 (default, but we set it explicitly for clarity)
+    let a = token
+        .mint()
+        .from(signer1.address()) // chooses the key inside the wallet filler
+        .send()
+        .await?;
+    info!("minted. {a:#?}");
+    // Second mint → signed by signer‑2
+    let b = token.mint().from(signer2.address()).send().await?;
+    info!("minted. {b:#?}");
+    let usdt_balance_1 = token.balanceOf(signer1.address()).call().await?;
+    let usdt_balance_2 = token.balanceOf(signer2.address()).call().await?;
+    info!(%usdt_balance_1, "post mint usdt balance with address one");
+    info!(%usdt_balance_2, "post mint usdt balance with address two");
+
     Ok(())
 }
 
