@@ -250,6 +250,16 @@ async fn main() -> anyhow::Result<()> {
                     }
                 } else {
                     debug!("Skipping signal; running in read-only mode");
+                    match swarm
+                    .behaviour_mut()
+                    .gossipsub
+                    .publish(signal_topic.clone(), serde_json::to_vec(&signal)?) {
+                Ok(_) => info!(signal = %signal, "Published signal"),
+                Err(gossipsub::PublishError::Duplicate) => {
+                        debug!(signal = %signal, "Signal already published (duplicate)");
+                    }
+                Err(e) => return Err(e.into()),
+            }
                 }
             }
 
@@ -286,6 +296,17 @@ async fn main() -> anyhow::Result<()> {
                                         }
                                     } else {
                                         debug!("Skipping signal; running in read-only mode");
+                                        match swarm
+                                        .behaviour_mut()
+                                        .gossipsub
+                                        .publish(signal_topic.clone(), serde_json::to_vec(&received_signal)?) {
+                                    Ok(_) => info!(signal = %received_signal, "Published signal"),
+                                    Err(gossipsub::PublishError::Duplicate) => {
+                                            debug!(signal = %received_signal, "Signal already published (duplicate)");
+                                        }
+                                    Err(e) => return Err(e.into()),
+                                }
+
                                     }
                                 }
                                 Err(e) => {
