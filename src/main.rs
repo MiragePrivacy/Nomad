@@ -179,10 +179,6 @@ async fn main() -> anyhow::Result<()> {
     let (signal_tx, mut signal_rx) = mpsc::unbounded_channel();
     let _ = spawn_rpc_server(signal_tx, args.rpc_port).await;
 
-    let mut highest_block: u64 = 0;
-
-    // Setup WebSocket provider for reading operations
-
     let ws = WsConnect::new(&args.ws_rpc);
     let ws_provider = Arc::new(
         ProviderBuilder::new()
@@ -191,41 +187,67 @@ async fn main() -> anyhow::Result<()> {
             .context("connect ws")?,
     );
 
-    // Setup HTTP provider for transaction sending
-    let http_provider = Arc::new(
-        ProviderBuilder::new()
+    let signers = Arc::new(build_signers(&args)?);
+
+    let provider_with_wallet = if let Some((ref s1, ref s2)) = *signers {
+        let mut wallet = EthereumWallet::new(s1.clone());
+        wallet.register_signer(s2.clone());
+
+        let http_provider = ProviderBuilder::new()
             .connect(&args.http_rpc)
             .await
-            .context("connect http")?,
-    );
+            .context("connect http")?;
 
-    let signers = Arc::new(build_signers(&args)?);
+        Some(Arc::new(
+            ProviderBuilder::new()
+                .wallet(wallet)
+                .connect_provider(http_provider),
+        ))
+    } else {
+        debug!("Skipping provider with wallet setup.");
+        None
+    };
 
     if let Some(token_contract) = args.faucet {
         if let Some((ref s1, ref s2)) = *signers {
-            call_faucet(token_contract.parse()?, http_provider.clone(), s1, s2).await?;
+            if let Some(provider_with_wallet_inner) = provider_with_wallet.clone() {
+                call_faucet(
+                    token_contract.parse()?,
+                    provider_with_wallet_inner.clone(),
+                    s1,
+                    s2,
+                )
+                .await?;
+            }
+        } else {
+            debug!("It's not possible to use the faucet without both pk1 and pk2")
         }
     }
 
     loop {
         tokio::select! {
             Some(signal) = signal_rx.recv() => {
-                // publish with the network
-                match swarm
-                    .behaviour_mut()
-                    .gossipsub
-                    .publish(signal_topic.clone(), serde_json::to_vec(&signal)?) {
-                    Ok(_) => info!(signal = %signal, "Published signal"),
-                    Err(gossipsub::PublishError::Duplicate) => {
-                        debug!(signal = %signal, "Signal already published (duplicate)");
-                    }
-                    Err(e) => return Err(e.into()),
-                }
-
                 if let Some((ref s1, ref s2)) = *signers {
-                        if let Err(e) = process_signal(&signal, ws_provider.clone(), s1, s2).await {
-                            warn!(%e, "failed to process signal");
+                    let process_result = process_signal(&signal, provider_with_wallet.clone().unwrap().clone(), s1, s2).await;
+                    if let Ok(processing_status) = process_result {
+                        match processing_status {
+                            ProcessSignalStatus::Broadcast => {
+                                match swarm
+                                            .behaviour_mut()
+                                            .gossipsub
+                                            .publish(signal_topic.clone(), serde_json::to_vec(&signal)?) {
+                                        Ok(_) => info!(signal = %signal, "Published signal"),
+                                        Err(gossipsub::PublishError::Duplicate) => {
+                                                debug!(signal = %signal, "Signal already published (duplicate)");
+                                            }
+                                        Err(e) => return Err(e.into()),
+                                    }
+                            }
+                            _ => {}
                         }
+                    } else if let Err(e) = process_result {
+                        warn!(%e, "failed to process signal");
+                    }
                 } else {
                     debug!("Skipping signal; running in read-only mode");
                 }
@@ -237,24 +259,31 @@ async fn main() -> anyhow::Result<()> {
 
                 SwarmEvent::Behaviour(GossipBehaviorEvent::Gossipsub(gossipsub::Event::Message { message, .. })) => {
                     match message.topic {
-                        t if t == block_topic.hash() => {
-                            if message.data.len() == 8 {
-                                // Turn the 8‑byte payload back into u64
-                                let num = u64::from_be_bytes(message.data[..8].try_into().unwrap());
-                                if num > highest_block {
-                                    info!(new_block = num, current_block = highest_block, "Heard gossip: advancing to new block");
-                                    highest_block = num;    // accept progress
-                                } // else silently ignore stale or duplicate heights
-                            }
-                        }
                         t if t == signal_topic.hash() => {
                             match serde_json::from_slice::<Signal>(&message.data) {
                                 Ok(received_signal) => {
                                     info!(signal = %received_signal, "Received signal gossip");
                                     if let Some((ref s1, ref s2)) = *signers {
-                                            if let Err(e) = process_signal(&received_signal, ws_provider.clone(), s1, s2).await {
-                                                warn!(%e, "failed to process signal");
+                                        let process_result = process_signal(&received_signal, provider_with_wallet.clone().unwrap().clone(), s1, s2).await;
+                                        if let Ok(processing_status) = process_result {
+                                            match processing_status {
+                                                ProcessSignalStatus::Broadcast => {
+                                                    match swarm
+                                                                .behaviour_mut()
+                                                                .gossipsub
+                                                                .publish(signal_topic.clone(), serde_json::to_vec(&received_signal)?) {
+                                                            Ok(_) => info!(signal = %received_signal, "Published signal"),
+                                                            Err(gossipsub::PublishError::Duplicate) => {
+                                                                    debug!(signal = %received_signal, "Signal already published (duplicate)");
+                                                                }
+                                                            Err(e) => return Err(e.into()),
+                                                        }
+                                                }
+                                                _ => {}
                                             }
+                                        } else if let Err(e) = process_result {
+                                            warn!(%e, "failed to process signal");
+                                        }
                                     } else {
                                         debug!("Skipping signal; running in read-only mode");
                                     }
@@ -279,47 +308,66 @@ sol! {
     contract TokenContract {
         function balanceOf(address) public view returns (uint256);
         function mint() external;
+        function transfer(address to, uint256 value) external returns (bool);
     }
+}
+
+pub enum ProcessSignalStatus {
+    Processed,
+    Broadcast,
 }
 
 pub async fn process_signal<P: Provider>(
     signal: &Signal,
-    provider: Arc<P>,
+    provider_with_wallet: Arc<P>,
     signer1: &PrivateKeySigner,
     signer2: &PrivateKeySigner,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<ProcessSignalStatus> {
     let addr_1 = signer1.address();
-    let ether_balance_1 = provider.get_balance(addr_1).await?;
+    let ether_balance_1 = provider_with_wallet.get_balance(addr_1).await?;
     let addr_2 = signer2.address();
-    let ether_balance_2 = provider.get_balance(addr_2).await?;
+    let ether_balance_2 = provider_with_wallet.get_balance(addr_2).await?;
     info!(%ether_balance_1, "current eth balance with address one");
     info!(%ether_balance_2, "current eth balance with address two");
 
-    let token_contract = TokenContract::new(signal.token_contract, provider);
+    let token_contract = TokenContract::new(signal.token_contract, provider_with_wallet);
     let usdt_balance_1 = token_contract.balanceOf(addr_1).call().await?;
     let usdt_balance_2 = token_contract.balanceOf(addr_2).call().await?;
     info!(%usdt_balance_1, "current usdt balance with address one");
     info!(%usdt_balance_2, "current usdt balance with address two");
-    Ok(())
+
+    if usdt_balance_1 > signal.transfer_amount {
+        let _ = token_contract
+            .transfer(signal.recipient, signal.transfer_amount)
+            .from(signer1.address())
+            .send()
+            .await?;
+    } else if usdt_balance_2 > signal.transfer_amount {
+        let _ = token_contract
+            .transfer(signal.recipient, signal.transfer_amount)
+            .from(signer2.address())
+            .send()
+            .await?;
+    } else {
+        info!("Not enough balance to process the incoming request. Broadcasting...");
+        return Ok(ProcessSignalStatus::Broadcast);
+    }
+
+    info!(
+        "Processed the payment of {} tokens to {}",
+        signal.transfer_amount, signal.recipient
+    );
+
+    Ok(ProcessSignalStatus::Processed)
 }
 
 pub async fn call_faucet<P: Provider>(
     token_addr: Address,
-    provider: Arc<P>,
+    provider_with_wallet: Arc<P>,
     signer1: &PrivateKeySigner,
     signer2: &PrivateKeySigner,
 ) -> anyhow::Result<()> {
     info!("minting tokens.");
-    // ❶ Bundle both keys in a wallet.
-    let mut wallet = EthereumWallet::new(signer1.clone()); // default signer = signer1
-    wallet.register_signer(signer2.clone());
-
-    // ❸ Single contract handle reused for every sender.
-    // Create provider with wallet for transactions
-    let provider_with_wallet = ProviderBuilder::new()
-        .wallet(wallet)
-        .connect_provider(provider);
-
     let token = TokenContract::new(token_addr, &provider_with_wallet);
 
     // First mint → signed by signer‑1 (default, but we set it explicitly for clarity)
@@ -328,14 +376,12 @@ pub async fn call_faucet<P: Provider>(
         .from(signer1.address()) // chooses the key inside the wallet filler
         .send()
         .await?;
-    info!("minted. {a:#?}");
+    info!("minted.");
     // Second mint → signed by signer‑2
     let b = token.mint().from(signer2.address()).send().await?;
-    info!("minted. {b:#?}");
+    info!("minted.");
     let usdt_balance_1 = token.balanceOf(signer1.address()).call().await?;
     let usdt_balance_2 = token.balanceOf(signer2.address()).call().await?;
-    info!(%usdt_balance_1, "post mint usdt balance with address one");
-    info!(%usdt_balance_2, "post mint usdt balance with address two");
 
     Ok(())
 }
