@@ -2,20 +2,35 @@
 set -euo pipefail
 
 # ------------------------------------------------------------
-# 1. Parse arguments and validate
+# 1. Parse arguments and get user input
 # ------------------------------------------------------------
-NODE_COUNT=${1:-2}
-shift # Remove first argument (node count) so remaining args can be passed to binary
+# All arguments are passed as extra args to nodes
+EXTRA_ARGS="$@"
 
-if ! [[ "$NODE_COUNT" =~ ^[0-9]+$ ]] || [ "$NODE_COUNT" -lt 1 ]; then
-  echo "Usage: $0 [node_count] [additional_args...]"
-  echo "  node_count: number of nodes to run (default: 2, minimum: 1)"
-  echo "  additional_args: arbitrary flags and arguments passed to each node"
+# Prompt user for node configuration
+echo "Node Configuration:"
+read -p "How many write nodes (with private keys)? " WRITE_NODES
+read -p "How many read nodes (without private keys)? " READ_NODES
+
+# Validate input
+if ! [[ "$WRITE_NODES" =~ ^[0-9]+$ ]] || [ "$WRITE_NODES" -lt 0 ]; then
+  echo "Error: Write nodes must be a non-negative integer"
   exit 1
 fi
 
-# Capture remaining arguments to pass to each binary call
-EXTRA_ARGS="$@"
+if ! [[ "$READ_NODES" =~ ^[0-9]+$ ]] || [ "$READ_NODES" -lt 0 ]; then
+  echo "Error: Read nodes must be a non-negative integer"
+  exit 1
+fi
+
+NODE_COUNT=$((WRITE_NODES + READ_NODES))
+
+if [ "$NODE_COUNT" -lt 1 ]; then
+  echo "Error: Must have at least one node (write or read)"
+  exit 1
+fi
+
+echo "Starting $WRITE_NODES write nodes and $READ_NODES read nodes (total: $NODE_COUNT)"
 
 # ------------------------------------------------------------
 # 2. Load private keys from .env file
@@ -47,11 +62,15 @@ shuffle_array() {
 
 shuffle_array KEYS
 
-# Calculate how many key pairs we have (each node needs 2 keys)
+# Calculate how many key pairs we have (each write node needs 2 keys)
 KEY_PAIRS=$((${#KEYS[@]} / 2))
-echo "[runner] found ${#KEYS[@]} keys, supporting $KEY_PAIRS nodes with key pairs"
+echo "[runner] found ${#KEYS[@]} keys, supporting $KEY_PAIRS write nodes with key pairs"
 
-echo "[runner] starting $NODE_COUNT nodes"
+# Validate we have enough keys for write nodes
+if [ "$WRITE_NODES" -gt "$KEY_PAIRS" ]; then
+  echo "Error: Requested $WRITE_NODES write nodes but only have $KEY_PAIRS key pairs available"
+  exit 1
+fi
 
 # Starting ports for RPC and P2P
 RPC_START_PORT=8000
@@ -77,15 +96,14 @@ LOG1=$(mktemp)
 
 NODE1_CMD="$BIN --rpc-port $RPC_PORT_1 --p2p-port $P2P_PORT_1"
 
-# Calculate key indices for Node 1
-key_idx1=0
-key_idx2=1
-
-if [ $key_idx2 -lt ${#KEYS[@]} ]; then
+# Node 1 gets keys if it's a write node (node number <= WRITE_NODES)
+if [ 1 -le "$WRITE_NODES" ]; then
+  key_idx1=0
+  key_idx2=1
   NODE1_CMD="$NODE1_CMD --pk1 ${KEYS[$key_idx1]} --pk2 ${KEYS[$key_idx2]}"
-  echo "[runner] Node 1: RPC port $RPC_PORT_1, P2P port $P2P_PORT_1 (with keys)"
+  echo "[runner] Node 1: RPC port $RPC_PORT_1, P2P port $P2P_PORT_1 (write node with keys)"
 else
-  echo "[runner] Node 1: RPC port $RPC_PORT_1, P2P port $P2P_PORT_1 (no keys)"
+  echo "[runner] Node 1: RPC port $RPC_PORT_1, P2P port $P2P_PORT_1 (read node, no keys)"
 fi
 
 # Add extra arguments to Node 1 command (including faucet if specified)
@@ -123,15 +141,14 @@ for ((i=2; i<=NODE_COUNT; i++)); do
   # Build command with peer connection
   NODE_CMD="$BIN --rpc-port $RPC_PORT --p2p-port $P2P_PORT $PEER_ADDR"
   
-  # Calculate key indices for this node
-  key_idx1=$((2 * (i - 1)))
-  key_idx2=$((2 * (i - 1) + 1))
-  
-  if [ $key_idx2 -lt ${#KEYS[@]} ]; then
+  # This node gets keys if it's a write node (node number <= WRITE_NODES)
+  if [ $i -le "$WRITE_NODES" ]; then
+    key_idx1=$((2 * (i - 1)))
+    key_idx2=$((2 * (i - 1) + 1))
     NODE_CMD="$NODE_CMD --pk1 ${KEYS[$key_idx1]} --pk2 ${KEYS[$key_idx2]}"
-    echo "[runner] Node $i: RPC port $RPC_PORT, P2P port $P2P_PORT, connecting to Node $peer_idx (with keys)"
+    echo "[runner] Node $i: RPC port $RPC_PORT, P2P port $P2P_PORT, connecting to Node $peer_idx (write node with keys)"
   else
-    echo "[runner] Node $i: RPC port $RPC_PORT, P2P port $P2P_PORT, connecting to Node $peer_idx (no keys)"
+    echo "[runner] Node $i: RPC port $RPC_PORT, P2P port $P2P_PORT, connecting to Node $peer_idx (read node, no keys)"
   fi
   
   # Add extra arguments but exclude --faucet to prevent double execution
@@ -143,13 +160,26 @@ for ((i=2; i<=NODE_COUNT; i++)); do
     fi
   fi
   
+  # Create log file for this node to capture its address
+  LOG_FILE=$(mktemp)
+  
   setsid stdbuf -oL env RUST_LOG=nomad=debug $NODE_CMD \
-    | sed -u "s/^/\x1b[${colors[$color_idx]}mNode $i:\x1b[0m /" &
+    > >(tee "$LOG_FILE" | sed -u "s/^/\x1b[${colors[$color_idx]}mNode $i:\x1b[0m /") 2>&1 &
   PIDS[$i]=$!
   RPC_PORTS[$i]=$RPC_PORT
   
-  # Brief pause to let node start before launching next
-  sleep 0.5
+  # Wait for this node's address before launching the next node
+  echo "[runner] waiting for Node $i address..."
+  while true; do
+    # Look for the specific port this node is listening on
+    if ADDR=$(grep -m1 "Listening on /ip4/127.0.0.1/tcp/$P2P_PORT" "$LOG_FILE" | grep -oE '/ip4/[^ ]+'); then
+      NODE_ADDRS[$i]=$ADDR
+      echo "[runner] Node $i address: $ADDR"
+      rm -f "$LOG_FILE"
+      break
+    fi
+    sleep 0.1
+  done
 done
 
 # ------------------------------------------------------------
