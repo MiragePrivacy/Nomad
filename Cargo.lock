@@ -3896,6 +3896,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "nomad-core"
+version = "0.1.0"
+dependencies = [
+ "alloy",
+ "anyhow",
+ "futures",
+ "nomad-ethereum",
+ "nomad-types",
+ "serde",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "nomad-ethereum"
 version = "0.1.0"
 dependencies = [

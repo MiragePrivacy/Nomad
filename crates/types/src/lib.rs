@@ -29,6 +29,7 @@ sol! {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
 pub enum ProcessSignalStatus {
     Processed,
     Broadcast,
