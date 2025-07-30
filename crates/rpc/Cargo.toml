@@ -1,0 +1,11 @@
+[package]
+name = "nomad-rpc"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+nomad-types = { path = "../types" }
+jsonrpsee.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+anyhow.workspace = true

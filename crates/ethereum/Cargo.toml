@@ -1,0 +1,11 @@
+[package]
+name = "nomad-ethereum"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+nomad-types = { path = "../types" }
+alloy.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+anyhow.workspace = true

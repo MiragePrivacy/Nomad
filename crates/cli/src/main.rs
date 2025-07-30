@@ -1,3 +1,5 @@
+mod cli;
+
 use std::{
     hash::{DefaultHasher, Hash, Hasher},
     sync::Arc,
@@ -14,7 +16,6 @@ use alloy::{
 use anyhow::Context as _;
 use clap::Parser;
 use futures::StreamExt;
-use jsonrpsee::{core::async_trait, proc_macros::rpc, server::Server};
 use libp2p::{
     gossipsub, noise,
     swarm::{NetworkBehaviour, SwarmEvent},
@@ -25,97 +26,14 @@ use tokio::sync::mpsc;
 use tracing::{debug, info, instrument, warn};
 use tracing_subscriber::EnvFilter;
 
-#[derive(Parser)]
-#[command(author, version, about, long_about = None)]
-struct Args {
-    #[arg(short, long, help = "Port for the RPC server")]
-    rpc_port: Option<u16>,
+use crate::cli::Args;
+use nomad_types::*;
+use nomad_rpc::*;
 
-    #[arg(short, long, help = "Port for the P2P node")]
-    p2p_port: Option<u16>,
-
-    #[arg(help = "Multiaddr of a peer to connect to")]
-    peer: Option<String>,
-
-    #[arg(long, help = "Private key 1 to use")]
-    pk1: Option<String>,
-
-    #[arg(long, help = "Private key 2 to use")]
-    pk2: Option<String>,
-
-    #[arg(
-        long,
-        help = "Use the faucet functionality on the given token contract. For testing mode."
-    )]
-    faucet: Option<String>,
-
-    #[arg(long, help = "WebSocket RPC URL for reading blockchain data")]
-    ws_rpc: String,
-
-    #[arg(long, help = "HTTP RPC URL for sending transactions")]
-    http_rpc: String,
-}
-
-#[derive(Deserialize, Serialize, Clone)]
-pub struct Signal {
-    escrow_contract: Address,
-    token_contract: Address,
-    recipient: Address,
-    transfer_amount: U256,
-    reward_amount: U256,
-}
-
-impl std::fmt::Display for Signal {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "send {} tokens to {} and collect {} tokens from escrow {}",
-            self.transfer_amount, self.recipient, self.reward_amount, self.escrow_contract
-        )
-    }
-}
-
-#[rpc(server, namespace = "mirage")]
-pub trait MirageRpc {
-    #[method(name = "signal")]
-    async fn signal(&self, message: Signal) -> String;
-}
-
-struct MirageServer {
-    signal_tx: mpsc::UnboundedSender<Signal>,
-}
-
-#[async_trait]
-impl MirageRpcServer for MirageServer {
-    async fn signal(&self, message: Signal) -> String {
-        info!(signal = %message, "Received signal");
-        let _ = self.signal_tx.send(message.clone());
-        format!("ack: {}", message)
-    }
-}
 
 #[derive(NetworkBehaviour)]
 pub struct GossipBehavior {
     pub gossipsub: gossipsub::Behaviour,
-}
-
-#[instrument(skip(signal_tx))]
-async fn spawn_rpc_server(
-    signal_tx: mpsc::UnboundedSender<Signal>,
-    rpc_port: Option<u16>,
-) -> anyhow::Result<()> {
-    let addr = match rpc_port {
-        Some(port) => format!("127.0.0.1:{port}"),
-        None => "127.0.0.1:0".to_string(),
-    };
-    let server = Server::builder().build(addr).await?;
-    let server_addr = server.local_addr()?;
-    let rpc_server = server.start(MirageServer { signal_tx }.into_rpc());
-
-    println!("Running rpc on {server_addr}");
-
-    tokio::spawn(rpc_server.stopped());
-    Ok(())
 }
 
 #[tokio::main]
@@ -322,20 +240,6 @@ async fn main() -> anyhow::Result<()> {
             }
         }
     }
-}
-
-sol! {
-    #[sol(rpc)]
-    contract TokenContract {
-        function balanceOf(address) public view returns (uint256);
-        function mint() external;
-        function transfer(address to, uint256 value) external returns (bool);
-    }
-}
-
-pub enum ProcessSignalStatus {
-    Processed,
-    Broadcast,
 }
 
 pub async fn process_signal<P: Provider>(

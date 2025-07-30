@@ -3874,7 +3874,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "nomad"
+name = "nomad-cli"
 version = "0.1.0"
 dependencies = [
  "alloy",
@@ -3885,12 +3885,57 @@ dependencies = [
  "futures",
  "jsonrpsee",
  "libp2p",
+ "nomad-rpc",
+ "nomad-types",
  "serde",
  "serde_json",
  "tokio",
  "toml",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "nomad-ethereum"
+version = "0.1.0"
+dependencies = [
+ "alloy",
+ "anyhow",
+ "nomad-types",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "nomad-p2p"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures",
+ "libp2p",
+ "nomad-types",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "nomad-rpc"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "jsonrpsee",
+ "nomad-types",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "nomad-types"
+version = "0.1.0"
+dependencies = [
+ "alloy",
+ "serde",
 ]
 
 [[package]]

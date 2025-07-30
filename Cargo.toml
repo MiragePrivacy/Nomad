@@ -1,9 +1,14 @@
-[package]
-name = "nomad"
+[workspace]
+members = [
+    "crates/*"
+]
+resolver = "2"
+
+[workspace.package]
 version = "0.1.0"
 edition = "2021"
 
-[dependencies]
+[workspace.dependencies]
 clap = { version = "4.5.37", features = ["derive"] }
 anyhow = "1.0.98"
 toml = "0.8.22"
