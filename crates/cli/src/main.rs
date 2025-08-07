@@ -266,13 +266,19 @@ pub async fn process_signal<P: Provider>(
 
     let min_eth_balance = U256::from(10_000_000_000_000_000u64); // 0.01 ETH for gas fees
     
-    // todo: only proceed if the escrow wasn't bonded yet
+    let escrow = Escrow::new(signal.escrow_contract, &provider_with_wallet);
+    let is_already_bonded = escrow.is_bonded().call().await?;
+    
+    if is_already_bonded {
+        info!("Escrow already bonded, broadcasting signal");
+        return Ok(ProcessSignalStatus::Broadcast);
+    }
+    
     // question: do the failures here terminate the program? at most they should only be logged (at least that is the case for the contract interactions)
     // todo: refactor to avoid repeating the same logic in both if branches
     // todo: make a receipt of the transactions and send back to signal.acknowledgement_url via a POST req
     if usdt_balance_2 > signal.transfer_amount && usdt_balance_1 > bond_amount && ether_balance_1 > min_eth_balance && ether_balance_2 > min_eth_balance {
         let _ = token_contract.approve(signal.escrow_contract, bond_amount).from(signer1.address()).send().await?;
-        let escrow = Escrow::new(signal.escrow_contract, &provider_with_wallet);
         let _ = escrow.bond(bond_amount).from(signer1.address()).send().await?;
         let _ = token_contract
             .transfer(signal.recipient, signal.transfer_amount)
@@ -286,7 +292,6 @@ pub async fn process_signal<P: Provider>(
         );
     } else if usdt_balance_1 > signal.transfer_amount && usdt_balance_2 > bond_amount && ether_balance_1 > min_eth_balance && ether_balance_2 > min_eth_balance {
         let _ = token_contract.approve(signal.escrow_contract, bond_amount).from(signer2.address()).send().await?;
-        let escrow = Escrow::new(signal.escrow_contract, &provider_with_wallet);
         let _ = escrow.bond(bond_amount).from(signer2.address()).send().await?;
         let _ = token_contract
             .transfer(signal.recipient, signal.transfer_amount)
