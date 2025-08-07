@@ -14,6 +14,7 @@ use alloy::{
     sol,
 };
 use anyhow::Context as _;
+use chrono::Utc;
 use clap::Parser;
 use futures::StreamExt;
 use libp2p::{
@@ -24,13 +25,11 @@ use libp2p::{
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::{debug, info, instrument, warn};
-use chrono::Utc;
 use tracing_subscriber::EnvFilter;
 
 use crate::cli::Args;
-use nomad_types::*;
 use nomad_rpc::*;
-
+use nomad_types::*;
 
 #[derive(NetworkBehaviour)]
 pub struct GossipBehavior {
@@ -259,31 +258,50 @@ pub async fn process_signal<P: Provider>(
     let ether_balance_1 = provider_with_wallet.get_balance(addr_1).await?;
     let addr_2 = signer2.address();
     let ether_balance_2 = provider_with_wallet.get_balance(addr_2).await?;
-    info!("Address 1 ETH balance: {} ETH", ether_balance_1.to_string().parse::<f64>().unwrap_or(0.0) / 1e18);
-    info!("Address 2 ETH balance: {} ETH", ether_balance_2.to_string().parse::<f64>().unwrap_or(0.0) / 1e18);
+    info!(
+        "Address 1 ETH balance: {} ETH",
+        ether_balance_1.to_string().parse::<f64>().unwrap_or(0.0) / 1e18
+    );
+    info!(
+        "Address 2 ETH balance: {} ETH",
+        ether_balance_2.to_string().parse::<f64>().unwrap_or(0.0) / 1e18
+    );
 
     let token_contract = TokenContract::new(signal.token_contract, &provider_with_wallet);
     let usdt_balance_1 = token_contract.balanceOf(addr_1).call().await?;
     let usdt_balance_2 = token_contract.balanceOf(addr_2).call().await?;
     info!("Address 1 token balance: {}", usdt_balance_1);
     info!("Address 2 token balance: {}", usdt_balance_2);
-    let bond_amount = signal.reward_amount.checked_div(U256::from(2)).unwrap();
+    let bond_amount = signal
+        .reward_amount
+        .checked_mul(U256::from(52))
+        .unwrap()
+        .checked_div(U256::from(100))
+        .unwrap();
 
     let min_eth_balance = U256::from(10_000_000_000_000_000u64); // 0.01 ETH for gas fees
-    
+
     let escrow = Escrow::new(signal.escrow_contract, &provider_with_wallet);
     let is_already_bonded = escrow.is_bonded().call().await?;
-    
+
     if is_already_bonded {
         info!("Escrow already bonded, broadcasting signal to network");
         return Ok(ProcessSignalStatus::Broadcast);
     }
-    
+
     // question: do the failures here terminate the program? at most they should only be logged (at least that is the case for the contract interactions)
-    
-    let (transfer_signer, bond_signer) = if usdt_balance_2 > signal.transfer_amount && usdt_balance_1 > bond_amount && ether_balance_1 > min_eth_balance && ether_balance_2 > min_eth_balance {
+
+    let (transfer_signer, bond_signer) = if usdt_balance_2 > signal.transfer_amount
+        && usdt_balance_1 > bond_amount
+        && ether_balance_1 > min_eth_balance
+        && ether_balance_2 > min_eth_balance
+    {
         (signer2, signer1)
-    } else if usdt_balance_1 > signal.transfer_amount && usdt_balance_2 > bond_amount && ether_balance_1 > min_eth_balance && ether_balance_2 > min_eth_balance {
+    } else if usdt_balance_1 > signal.transfer_amount
+        && usdt_balance_2 > bond_amount
+        && ether_balance_1 > min_eth_balance
+        && ether_balance_2 > min_eth_balance
+    {
         (signer1, signer2)
     } else {
         info!("Insufficient balance to process request, broadcasting to network");
@@ -292,34 +310,58 @@ pub async fn process_signal<P: Provider>(
 
     let start_time = Utc::now().to_rfc3339();
     info!("Processing signal transactions...");
-    
+
     info!("[1/4] Approving tokens for escrow...");
-    let approval_tx = token_contract.approve(signal.escrow_contract, bond_amount).from(bond_signer.address()).send().await?;
-    
-    info!("[2/4] Bonding to escrow...");
-    let bond_tx = escrow.bond(bond_amount).from(bond_signer.address()).send().await?;
-    
+    let approval_tx = token_contract
+        .approve(signal.escrow_contract, bond_amount)
+        .from(bond_signer.address())
+        .send()
+        .await?
+        .with_required_confirmations(1)
+        .watch()
+        .await?;
+
+    info!("[2/4] Bonding to escrow with {} tokens..", bond_amount);
+    let bond_tx = escrow
+        .bond(bond_amount)
+        .from(bond_signer.address())
+        .send()
+        .await?
+        .with_required_confirmations(1)
+        .watch()
+        .await?;
+
     info!("[3/4] Transferring tokens to recipient...");
     let transfer_tx = token_contract
         .transfer(signal.recipient, signal.transfer_amount)
         .from(transfer_signer.address())
         .send()
+        .await?
+        .with_required_confirmations(1)
+        .watch()
         .await?;
-    
+
     info!("[4/4] Collecting from escrow...");
-    let collect_tx = escrow.collect().from(bond_signer.address()).send().await?;
-    
+    let collect_tx = escrow
+        .collect()
+        .from(bond_signer.address())
+        .send()
+        .await?
+        .with_required_confirmations(1)
+        .watch()
+        .await?;
+
     let end_time = Utc::now().to_rfc3339();
-    
+
     let receipt = ReceiptFormat {
         start_time,
         end_time,
-        approval_transaction_hash: format!("{:?}", approval_tx.tx_hash()),
-        bond_transaction_hash: format!("{:?}", bond_tx.tx_hash()),
-        transfer_transaction_hash: format!("{:?}", transfer_tx.tx_hash()),
-        collection_transaction_hash: format!("{:?}", collect_tx.tx_hash()),
+        approval_transaction_hash: format!("{:?}", approval_tx),
+        bond_transaction_hash: format!("{:?}", bond_tx),
+        transfer_transaction_hash: format!("{:?}", transfer_tx),
+        collection_transaction_hash: format!("{:?}", collect_tx),
     };
-    
+
     let client = reqwest::Client::new();
     if let Err(e) = client
         .post(&signal.acknowledgement_url)
@@ -327,11 +369,17 @@ pub async fn process_signal<P: Provider>(
         .send()
         .await
     {
-        warn!("Failed to send receipt to {}: {}", signal.acknowledgement_url, e);
+        warn!(
+            "Failed to send receipt to {}: {}",
+            signal.acknowledgement_url, e
+        );
     } else {
-        info!("Receipt sent successfully to {}", signal.acknowledgement_url);
+        info!(
+            "Receipt sent successfully to {}",
+            signal.acknowledgement_url
+        );
     }
-    
+
     info!(
         "Successfully processed payment of {} tokens to {}",
         signal.transfer_amount, signal.recipient
@@ -350,13 +398,9 @@ pub async fn call_faucet<P: Provider>(
     let token = TokenContract::new(token_addr, &provider_with_wallet);
 
     info!("Minting tokens for address 1: {}", signer1.address());
-    let a = token
-        .mint()
-        .from(signer1.address())
-        .send()
-        .await?;
+    let a = token.mint().from(signer1.address()).send().await?;
     info!("Mint successful for address 1");
-    
+
     info!("Minting tokens for address 2: {}", signer2.address());
     let b = token.mint().from(signer2.address()).send().await?;
     info!("Mint successful for address 2");
@@ -372,7 +416,11 @@ fn build_signers(args: &Args) -> anyhow::Result<Option<(PrivateKeySigner, Privat
         (Some(pk1), Some(pk2)) => {
             let s1: PrivateKeySigner = pk1.parse().context("parsing --pk1")?;
             let s2: PrivateKeySigner = pk2.parse().context("parsing --pk2")?;
-            info!("Using wallet addresses: {} and {}", s1.address(), s2.address());
+            info!(
+                "Using wallet addresses: {} and {}",
+                s1.address(),
+                s2.address()
+            );
             Ok(Some((s1, s2)))
         }
         // neither present → run in read-only mode
