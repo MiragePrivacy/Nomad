@@ -24,6 +24,7 @@ use libp2p::{
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::{debug, info, instrument, warn};
+use chrono::Utc;
 use tracing_subscriber::EnvFilter;
 
 use crate::cli::Args;
@@ -275,7 +276,6 @@ pub async fn process_signal<P: Provider>(
     }
     
     // question: do the failures here terminate the program? at most they should only be logged (at least that is the case for the contract interactions)
-    // todo: make a receipt of the transactions and send back to signal.acknowledgement_url via a POST req
     
     let (transfer_signer, bond_signer) = if usdt_balance_2 > signal.transfer_amount && usdt_balance_1 > bond_amount && ether_balance_1 > min_eth_balance && ether_balance_2 > min_eth_balance {
         (signer2, signer1)
@@ -286,14 +286,40 @@ pub async fn process_signal<P: Provider>(
         return Ok(ProcessSignalStatus::Broadcast);
     };
 
-    let _ = token_contract.approve(signal.escrow_contract, bond_amount).from(bond_signer.address()).send().await?;
-    let _ = escrow.bond(bond_amount).from(bond_signer.address()).send().await?;
-    let _ = token_contract
+    let start_time = Utc::now().to_rfc3339();
+    
+    let approval_tx = token_contract.approve(signal.escrow_contract, bond_amount).from(bond_signer.address()).send().await?;
+    let bond_tx = escrow.bond(bond_amount).from(bond_signer.address()).send().await?;
+    let transfer_tx = token_contract
         .transfer(signal.recipient, signal.transfer_amount)
         .from(transfer_signer.address())
         .send()
         .await?;
-    let _ = escrow.collect().from(bond_signer.address()).send().await?;
+    let collect_tx = escrow.collect().from(bond_signer.address()).send().await?;
+    
+    let end_time = Utc::now().to_rfc3339();
+    
+    let receipt = ReceiptFormat {
+        start_time,
+        end_time,
+        approval_transaction_hash: format!("{:?}", approval_tx.tx_hash()),
+        bond_transaction_hash: format!("{:?}", bond_tx.tx_hash()),
+        transfer_transaction_hash: format!("{:?}", transfer_tx.tx_hash()),
+        collection_transaction_hash: format!("{:?}", collect_tx.tx_hash()),
+    };
+    
+    let client = reqwest::Client::new();
+    if let Err(e) = client
+        .post(&signal.acknowledgement_url)
+        .json(&receipt)
+        .send()
+        .await
+    {
+        warn!(%e, url = %signal.acknowledgement_url, "Failed to send receipt");
+    } else {
+        info!(url = %signal.acknowledgement_url, "Receipt sent successfully");
+    }
+    
     info!(
         "Processed the payment of {} tokens to {}",
         signal.transfer_amount, signal.recipient
