@@ -68,6 +68,58 @@ echo "[runner] found ${#SENDER_KEYS[@]} sender keys for escrow deployment"
 # ------------------------------------------------------------
 # Balance validation functions
 # ------------------------------------------------------------
+call_token_faucet() {
+  local private_key=$1
+  local description=$2
+  
+  echo "[runner] Calling token faucet for $description..."
+  
+  # Call the mint function on the token contract (each call gives 1000 tokens)
+  if cast send --private-key "$private_key" --rpc-url "$RPC" \
+    "$TOKEN_CONTRACT" "mint()" >/dev/null 2>&1; then
+    echo "[runner] Faucet call successful - 1000 tokens minted"
+    
+    # Get updated balance to confirm
+    local address=$(cast wallet address "$private_key" 2>/dev/null)
+    local new_balance=$(cast call "$TOKEN_CONTRACT" "balanceOf(address)(uint256)" "$address" --rpc-url "$RPC" 2>/dev/null || echo "0")
+    echo "[runner] New token balance: $new_balance tokens"
+    
+    # Check if we need more tokens (may need multiple faucet calls)
+    local min_tokens="10000000000"  # 10000 tokens (assuming 6 decimals)
+    if (( new_balance >= min_tokens )); then
+      echo "[runner] Sufficient tokens after faucet call"
+      return 0
+    else
+      echo "[runner] Still need more tokens, calling faucet again..."
+      # Recursively call faucet until we have enough (with a limit)
+      local calls_made=1
+      while (( new_balance < min_tokens && calls_made < 15 )); do
+        sleep 1  # Brief delay between calls
+        if cast send --private-key "$private_key" --rpc-url "$RPC" \
+          "$TOKEN_CONTRACT" "mint()" >/dev/null 2>&1; then
+          ((calls_made++))
+          new_balance=$(cast call "$TOKEN_CONTRACT" "balanceOf(address)(uint256)" "$address" --rpc-url "$RPC" 2>/dev/null || echo "0")
+          echo "[runner] Faucet call $calls_made: balance now $new_balance tokens"
+        else
+          echo "[runner] ERROR: Faucet call $calls_made failed"
+          return 1
+        fi
+      done
+      
+      if (( new_balance >= min_tokens )); then
+        echo "[runner] Sufficient tokens after $calls_made faucet calls"
+        return 0
+      else
+        echo "[runner] ERROR: Could not get sufficient tokens after $calls_made faucet calls"
+        return 1
+      fi
+    fi
+  else
+    echo "[runner] ERROR: Faucet call failed"
+    return 1
+  fi
+}
+
 check_balance() {
   local private_key=$1
   local description=$2
@@ -110,6 +162,14 @@ check_balance() {
     echo "[runner] WARNING: $description has insufficient balance"
     [ "$has_sufficient_eth" = false ] && echo "  - Need at least 0.01 ETH for gas fees"
     [ "$has_sufficient_tokens" = false ] && echo "  - Need at least 10000 tokens for escrow funding"
+    
+    # Try to use faucet for insufficient tokens
+    if [ "$has_sufficient_tokens" = false ] && [ "$has_sufficient_eth" = true ]; then
+      echo "[runner] Attempting to use token faucet for $description"
+      call_token_faucet "$private_key" "$description"
+      return $?
+    fi
+    
     return 1
   fi
   
@@ -126,21 +186,46 @@ validate_sender_balances() {
   
   echo "[runner] Checking sender key balances..."
   local insufficient_count=0
+  local faucet_attempts=0
   
   for i in "${!SENDER_KEYS[@]}"; do
     local key="${SENDER_KEYS[$i]}"
     if ! check_balance "$key" "Sender key $((i+1))"; then
       ((insufficient_count++))
+      ((faucet_attempts++))
     fi
   done
   
   if [ $insufficient_count -gt 0 ]; then
     echo
-    echo "[runner] WARNING: $insufficient_count sender key(s) have insufficient balance"
-    read -p "Continue anyway? (y/N): " continue_choice
-    if [[ ! "$continue_choice" =~ ^[Yy]$ ]]; then
-      echo "[runner] Exiting. Please fund the sender keys and try again."
-      exit 1
+    if [ $faucet_attempts -gt 0 ]; then
+      echo "[runner] $faucet_attempts sender key(s) attempted faucet calls"
+      echo "[runner] Re-checking balances after faucet attempts..."
+      
+      # Re-check balances after faucet attempts
+      insufficient_count=0
+      for i in "${!SENDER_KEYS[@]}"; do
+        local key="${SENDER_KEYS[$i]}"
+        local address=$(cast wallet address "$key" 2>/dev/null)
+        local token_balance=$(cast call "$TOKEN_CONTRACT" "balanceOf(address)(uint256)" "$address" --rpc-url "$RPC" 2>/dev/null || echo "0")
+        local min_tokens="10000000000"
+        
+        if (( token_balance < min_tokens )); then
+          ((insufficient_count++))
+          echo "[runner] Sender key $((i+1)) still has insufficient tokens: $token_balance"
+        fi
+      done
+    fi
+    
+    if [ $insufficient_count -gt 0 ]; then
+      echo "[runner] WARNING: $insufficient_count sender key(s) still have insufficient balance after faucet attempts"
+      read -p "Continue anyway? (y/N): " continue_choice
+      if [[ ! "$continue_choice" =~ ^[Yy]$ ]]; then
+        echo "[runner] Exiting. Please fund the sender keys manually and try again."
+        exit 1
+      fi
+    else
+      echo "[runner] All sender keys now have sufficient balance after faucet calls"
     fi
   fi
   
