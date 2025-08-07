@@ -10,7 +10,7 @@ use alloy::{
     network::EthereumWallet,
     primitives::{Address, U256},
     providers::{Provider, ProviderBuilder, WsConnect},
-    signers::local::PrivateKeySigner,
+    signers::{k256::elliptic_curve::rand_core::le, local::PrivateKeySigner},
     sol,
 };
 use anyhow::Context as _;
@@ -67,7 +67,7 @@ async fn main() -> anyhow::Result<()> {
                 .expect("Failed to make the gossipsub conf");
 
             let gossipsub = gossipsub::Behaviour::new(
-                gossipsub::MessageAuthenticity::Anonymous,
+                gossipsub::MessageAuthenticity::Author(libp2p::PeerId::random()),
                 gossipsub_config,
             )?;
 
@@ -185,12 +185,14 @@ async fn main() -> anyhow::Result<()> {
                 SwarmEvent::NewListenAddr { address, .. } =>
                     println!("Listening on {address:?}"),
 
-                SwarmEvent::Behaviour(GossipBehaviorEvent::Gossipsub(gossipsub::Event::Message { message, .. })) => {
+                SwarmEvent::Behaviour(GossipBehaviorEvent::Gossipsub(gossipsub::Event::Message { message, propagation_source, ..})) => {
                     match message.topic {
                         t if t == signal_topic.hash() => {
                             match serde_json::from_slice::<Signal>(&message.data) {
                                 Ok(received_signal) => {
                                     info!(signal = %received_signal, "Received signal gossip");
+                                    let source = format!("The source peer id is {:#?}", propagation_source);
+                                    info!(source);
                                     if let Some((ref s1, ref s2)) = *signers {
                                         let process_result = process_signal(&received_signal, provider_with_wallet.clone().unwrap().clone(), s1, s2).await;
                                         if let Ok(processing_status) = process_result {
@@ -255,33 +257,50 @@ pub async fn process_signal<P: Provider>(
     info!(%ether_balance_1, "current eth balance with address one");
     info!(%ether_balance_2, "current eth balance with address two");
 
-    let token_contract = TokenContract::new(signal.token_contract, provider_with_wallet);
+    let token_contract = TokenContract::new(signal.token_contract, &provider_with_wallet);
     let usdt_balance_1 = token_contract.balanceOf(addr_1).call().await?;
     let usdt_balance_2 = token_contract.balanceOf(addr_2).call().await?;
     info!(%usdt_balance_1, "current usdt balance with address one");
     info!(%usdt_balance_2, "current usdt balance with address two");
+    let bond_amount = signal.reward_amount.checked_div(U256::from(2)).unwrap();
 
-    if usdt_balance_1 > signal.transfer_amount {
-        let _ = token_contract
-            .transfer(signal.recipient, signal.transfer_amount)
-            .from(signer1.address())
-            .send()
-            .await?;
-    } else if usdt_balance_2 > signal.transfer_amount {
+    // todo: also check the eth balance
+    // todo: only proceed if the escrow wasn't bonded yet
+    // question: do the failures here terminate the program? at most they should only be logged (at least that is the case for the contract interactions)
+    // todo: refactor to avoid repeating the same logic in both if branches
+    // todo: make a receipt of the transactions and send back to signal.acknowledgement_url via a POST req
+    if usdt_balance_2 > signal.transfer_amount && usdt_balance_1 > bond_amount {
+        let _ = token_contract.approve(signal.escrow_contract, bond_amount).from(signer1.address()).send().await?;
+        let escrow = Escrow::new(signal.escrow_contract, &provider_with_wallet);
+        let _ = escrow.bond(bond_amount).from(signer1.address()).send().await?;
         let _ = token_contract
             .transfer(signal.recipient, signal.transfer_amount)
             .from(signer2.address())
             .send()
             .await?;
+        let _ = escrow.collect().from(signer1.address()).send().await?;
+        info!(
+            "Processed the payment of {} tokens to {}",
+            signal.transfer_amount, signal.recipient
+        );
+    } else if usdt_balance_1 > signal.transfer_amount && usdt_balance_2 > bond_amount {
+        let _ = token_contract.approve(signal.escrow_contract, bond_amount).from(signer2.address()).send().await?;
+        let escrow = Escrow::new(signal.escrow_contract, &provider_with_wallet);
+        let _ = escrow.bond(bond_amount).from(signer2.address()).send().await?;
+        let _ = token_contract
+            .transfer(signal.recipient, signal.transfer_amount)
+            .from(signer1.address())
+            .send()
+            .await?;
+        let _ = escrow.collect().from(signer2.address()).send().await?;
+        info!(
+            "Processed the payment of {} tokens to {}",
+            signal.transfer_amount, signal.recipient
+        );
     } else {
         info!("Not enough balance to process the incoming request. Broadcasting...");
         return Ok(ProcessSignalStatus::Broadcast);
     }
-
-    info!(
-        "Processed the payment of {} tokens to {}",
-        signal.transfer_amount, signal.recipient
-    );
 
     Ok(ProcessSignalStatus::Processed)
 }
