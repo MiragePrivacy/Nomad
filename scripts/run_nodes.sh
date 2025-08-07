@@ -1,11 +1,60 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Error trapping
+trap 'echo "[runner] ERROR: Script failed at line $LINENO. Exit code: $?" >&2' ERR
+
+# Debug function with timestamp - only output if DEBUG=1
+debug_log() {
+  if [ "${DEBUG:-0}" = "1" ]; then
+    echo "[runner] $(date '+%H:%M:%S') $*" >&2
+  fi
+}
+
+# Check dependencies
+check_dependencies() {
+  debug_log "Checking dependencies..."
+  
+  local missing_deps=0
+  
+  # Check for jq
+  if ! command -v jq &> /dev/null; then
+    echo "[runner] ERROR: jq is not installed. Please install jq."
+    ((missing_deps++))
+  fi
+  
+  # Check for forge
+  if ! command -v forge &> /dev/null; then
+    echo "[runner] ERROR: forge (foundry) is not installed."
+    ((missing_deps++))
+  fi
+  
+  # Check for cast
+  if ! command -v cast &> /dev/null; then
+    echo "[runner] ERROR: cast (foundry) is not installed."
+    ((missing_deps++))
+  fi
+  
+  # Check for curl
+  if ! command -v curl &> /dev/null; then
+    echo "[runner] ERROR: curl is not installed."
+    ((missing_deps++))
+  fi
+  
+  if [ $missing_deps -gt 0 ]; then
+    echo "[runner] ERROR: $missing_deps missing dependencies. Exiting."
+    exit 1
+  fi
+}
+
 # ------------------------------------------------------------
 # 1. Parse arguments and get user input
 # ------------------------------------------------------------
 # All arguments are passed as extra args to nodes
 EXTRA_ARGS="$@"
+
+# Check dependencies first
+check_dependencies
 
 # Prompt user for node configuration
 echo "Node Configuration:"
@@ -281,21 +330,40 @@ setup_escrow_contract() {
   local contract_dir="/tmp/escrow_$$"
   mkdir -p "$contract_dir"
   
-  echo "[runner] Downloading Escrow contract..."
+  echo "[runner] Setting up Escrow contract..."
   if ! curl -s -L "https://raw.githubusercontent.com/MiragePrivacy/escrow/master/src/Escrow.sol" -o "$contract_dir/Escrow.sol"; then
     echo "[runner] ERROR: Failed to download Escrow contract"
     return 1
   fi
   
-  echo "[runner] Compiling Escrow contract..."
-  if ! forge build --root "$contract_dir" --contracts "$contract_dir" --out "$contract_dir/out" >/dev/null 2>&1; then
+  # Create a basic foundry.toml for compilation
+  cat > "$contract_dir/foundry.toml" << 'EOF'
+[profile.default]
+src = "."
+out = "out"
+libs = ["lib"]
+optimizer = true
+optimizer_runs = 200
+EOF
+  
+  local compile_output
+  compile_output=$(FOUNDRY_DISABLE_NIGHTLY_WARNING=1 forge build --root "$contract_dir" --contracts "$contract_dir" --out "$contract_dir/out" 2>&1)
+  local compile_status=$?
+  
+  if [ $compile_status -ne 0 ]; then
     echo "[runner] ERROR: Failed to compile Escrow contract"
+    echo "[runner] Compile output: $compile_output"
+    return 1
+  fi
+  
+  if [ ! -f "$contract_dir/out/Escrow.sol/Escrow.json" ]; then
+    echo "[runner] ERROR: Compiled artifact not found at expected location"
     return 1
   fi
   
   # Export path for later use
   export ESCROW_CONTRACT_DIR="$contract_dir"
-  echo "[runner] Escrow contract ready at $contract_dir"
+  echo "[runner] Escrow contract compiled successfully"
 }
 
 # Setup escrow contract if we have sender keys
@@ -413,31 +481,99 @@ deploy_escrow() {
   local sender_key=$1
   local token_contract=$2
   
+  # Validation checks
   if [ -z "$ESCROW_CONTRACT_DIR" ] || [ ! -f "$ESCROW_CONTRACT_DIR/Escrow.sol" ]; then
-    echo "[runner] ERROR: Escrow contract not available"
+    echo "[runner] ERROR: Escrow contract not available" >&2
     return 1
   fi
   
-  echo "[runner] Deploying Escrow contract..."
-  
-  # Deploy the contract
-  local deploy_result=$(cast send --private-key "$sender_key" --rpc-url "$RPC" --create --json \
-    "$(cat "$ESCROW_CONTRACT_DIR/out/Escrow.sol/Escrow.json" | jq -r '.bytecode.object')" \
-    --constructor-args "$(cast abi-encode 'constructor(address)' "$token_contract")" 2>/dev/null)
-  
-  if [ $? -ne 0 ] || [ -z "$deploy_result" ]; then
-    echo "[runner] ERROR: Failed to deploy Escrow contract"
+  # Check if contract artifacts exist
+  local artifact_path="$ESCROW_CONTRACT_DIR/out/Escrow.sol/Escrow.json"
+  if [ ! -f "$artifact_path" ]; then
+    echo "[runner] ERROR: Contract artifact not found at $artifact_path" >&2
     return 1
   fi
   
-  # Extract contract address from deployment result
-  local contract_address=$(echo "$deploy_result" | jq -r '.contractAddress // empty')
-  
-  if [ -z "$contract_address" ] || [ "$contract_address" = "null" ]; then
-    echo "[runner] ERROR: Could not get contract address from deployment"
+  # Read and validate bytecode
+  local raw_json=$(cat "$artifact_path" 2>/dev/null)
+  if [ -z "$raw_json" ]; then
+    echo "[runner] ERROR: Could not read artifact file" >&2
     return 1
   fi
   
+  local bytecode=$(echo "$raw_json" | jq -r '.bytecode.object' 2>/dev/null)
+  if [ -z "$bytecode" ] || [ "$bytecode" = "null" ]; then
+    echo "[runner] ERROR: Could not read contract bytecode from JSON" >&2
+    return 1
+  fi
+  
+  # Encode constructor arguments
+  local constructor_args
+  constructor_args=$(env FOUNDRY_DISABLE_NIGHTLY_WARNING=1 cast abi-encode 'constructor(address)' "$token_contract" 2>/dev/null)
+  local encode_status=$?
+  
+  if [ $encode_status -ne 0 ] || [ -z "$constructor_args" ]; then
+    echo "[runner] ERROR: Could not encode constructor arguments" >&2
+    return 1
+  fi
+  
+  # Combine bytecode with constructor args
+  local full_bytecode="${bytecode}${constructor_args#0x}"
+  
+  # Deploy the contract with timeout
+  local deploy_result
+  deploy_result=$(timeout 30s env FOUNDRY_DISABLE_NIGHTLY_WARNING=1 cast send \
+    --private-key "$sender_key" \
+    --rpc-url "$RPC" \
+    --create \
+    --json \
+    "$full_bytecode" 2>/dev/null)
+  local deploy_status=$?
+  
+  if [ $deploy_status -eq 124 ]; then
+    echo "[runner] ERROR: Contract deployment timed out after 30 seconds" >&2
+    return 1
+  fi
+  
+  if [ $deploy_status -ne 0 ] || [ -z "$deploy_result" ]; then
+    echo "[runner] ERROR: Failed to deploy Escrow contract" >&2
+    return 1
+  fi
+  
+  # Try to extract contract address
+  local contract_address
+  
+  # First try parsing as JSON (cast --json output)
+  contract_address=$(echo "$deploy_result" | jq -r '.contractAddress // empty' 2>/dev/null)
+  
+  # If that fails, try parsing as plain transaction hash
+  if [ -z "$contract_address" ] || [ "$contract_address" = "null" ] || [ "$contract_address" = "empty" ]; then
+    local tx_hash=$(echo "$deploy_result" | grep -oE "0x[a-fA-F0-9]{64}" | head -1)
+    
+    if [ -n "$tx_hash" ]; then
+      sleep 3  # Wait for transaction to be mined
+      
+      local receipt
+      receipt=$(timeout 10s cast receipt "$tx_hash" --rpc-url "$RPC" --json 2>/dev/null)
+      if [ $? -eq 0 ] && [ -n "$receipt" ]; then
+        contract_address=$(echo "$receipt" | jq -r '.contractAddress // empty')
+      fi
+    fi
+  fi
+  
+  # Final validation
+  if [ -z "$contract_address" ] || [ "$contract_address" = "null" ] || [ "$contract_address" = "empty" ]; then
+    echo "[runner] ERROR: Could not extract contract address from deployment" >&2
+    return 1
+  fi
+  
+  # Validate contract address format
+  if [[ ! "$contract_address" =~ ^0x[a-fA-F0-9]{40}$ ]]; then
+    echo "[runner] ERROR: Invalid contract address format: $contract_address" >&2
+    return 1
+  fi
+  
+  # Output only the contract address (no debug messages)
   echo "$contract_address"
 }
 
@@ -451,16 +587,26 @@ fund_escrow() {
   
   # First approve the escrow to spend tokens
   local total_amount=$((reward_amount + payment_amount))
-  if ! cast send --private-key "$sender_key" --rpc-url "$RPC" \
-    "$TOKEN_CONTRACT" "approve(address,uint256)" "$escrow_address" "$total_amount" >/dev/null 2>&1; then
+  echo "[runner] Approving escrow to spend $total_amount tokens..."
+  
+  local approve_result=$(cast send --private-key "$sender_key" --rpc-url "$RPC" \
+    "$TOKEN_CONTRACT" "approve(address,uint256)" "$escrow_address" "$total_amount" 2>&1)
+  
+  if [ $? -ne 0 ]; then
     echo "[runner] ERROR: Failed to approve escrow for token spending"
+    echo "[runner] Approve error: $approve_result"
     return 1
   fi
   
+  echo "[runner] Approval successful, now funding escrow..."
+  
   # Fund the escrow
-  if ! cast send --private-key "$sender_key" --rpc-url "$RPC" \
-    "$escrow_address" "fund(uint256,uint256)" "$reward_amount" "$payment_amount" >/dev/null 2>&1; then
+  local fund_result=$(cast send --private-key "$sender_key" --rpc-url "$RPC" \
+    "$escrow_address" "fund(uint256,uint256)" "$reward_amount" "$payment_amount" 2>&1)
+  
+  if [ $? -ne 0 ]; then
     echo "[runner] ERROR: Failed to fund escrow"
+    echo "[runner] Fund error: $fund_result"
     return 1
   fi
   
@@ -514,8 +660,12 @@ deploy_escrow_and_send_signal() {
   
   # Deploy escrow contract
   local escrow_address
-  escrow_address=$(deploy_escrow "$sender_key" "$TOKEN_CONTRACT")
-  if [ $? -ne 0 ] || [ -z "$escrow_address" ]; then
+  set +e  # Temporarily disable exit on error
+  escrow_address=$(deploy_escrow "$sender_key" "$TOKEN_CONTRACT" 2>/dev/null)
+  local deploy_status=$?
+  set -e  # Re-enable exit on error
+  
+  if [ $deploy_status -ne 0 ] || [ -z "$escrow_address" ]; then
     echo "[runner] ERROR: Failed to deploy escrow, skipping signal"
     return 1
   fi
@@ -533,14 +683,20 @@ deploy_escrow_and_send_signal() {
   
   echo "[runner] Sending signal to port $port with escrow $escrow_address"
   
-  curl -s -X POST "http://127.0.0.1:$port" \
-    -H "Content-Type: application/json" \
-    -d "{\"jsonrpc\":\"2.0\",\"method\":\"mirage_signal\",\"params\":[${data}],\"id\":1}" > /dev/null
+  # Construct the JSON-RPC payload
+  local rpc_payload="{\"jsonrpc\":\"2.0\",\"method\":\"mirage_signal\",\"params\":[$data],\"id\":1}"
   
-  if [ $? -eq 0 ]; then
+  local curl_result
+  curl_result=$(curl -s -X POST "http://127.0.0.1:$port" \
+    -H "Content-Type: application/json" \
+    -d "$rpc_payload" 2>&1)
+  local curl_status=$?
+  
+  if [ $curl_status -eq 0 ]; then
     echo "[runner] Signal sent successfully"
   else
     echo "[runner] ERROR: Failed to send signal"
+    echo "[runner] curl error: $curl_result"
     return 1
   fi
 }
@@ -557,6 +713,9 @@ for ((i=1; i<=NODE_COUNT; i++)); do
   deploy_escrow_and_send_signal "${RPC_PORTS[$i]}"
   sleep 2  # Increased delay for contract deployment
 done
+
+echo "[runner] All signals sent. Nodes will continue running..."
+echo "[runner] Press Ctrl+C to stop all nodes"
 
 # ------------------------------------------------------------
 # 8. Clean shutdown on Ctrl‑C
@@ -595,4 +754,5 @@ cleanup() {
 
 trap cleanup INT TERM
 
+# Keep the script running to monitor nodes
 wait
