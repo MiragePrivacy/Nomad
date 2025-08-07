@@ -11,6 +11,12 @@ EXTRA_ARGS="$@"
 echo "Node Configuration:"
 read -p "How many write nodes (with private keys)? " WRITE_NODES
 read -p "How many read nodes (without private keys)? " READ_NODES
+echo
+read -p "Acknowledgement URL for receipts (leave empty for default): " ACK_URL
+if [ -z "$ACK_URL" ]; then
+  ACK_URL="https://httpbin.org/post"
+  echo "[runner] Using default acknowledgement URL: $ACK_URL"
+fi
 
 # Validate input
 if ! [[ "$WRITE_NODES" =~ ^[0-9]+$ ]] || [ "$WRITE_NODES" -lt 0 ]; then
@@ -39,7 +45,7 @@ if [ -f .env ]; then
   source .env
 fi
 
-# Collect available keys
+# Collect available keys for nodes
 KEYS=()
 for i in {1..20}; do  # Check up to 20 keys in case more are added
   key_name="KEY_$i"
@@ -47,6 +53,99 @@ for i in {1..20}; do  # Check up to 20 keys in case more are added
     KEYS+=("${!key_name}")
   fi
 done
+
+# Collect sender keys for escrow deployment
+SENDER_KEYS=()
+for i in {1..20}; do  # Check up to 20 sender keys
+  sender_key_name="SENDER_KEY_$i"
+  if [ -n "${!sender_key_name:-}" ]; then
+    SENDER_KEYS+=("${!sender_key_name}")
+  fi
+done
+
+echo "[runner] found ${#SENDER_KEYS[@]} sender keys for escrow deployment"
+
+# ------------------------------------------------------------
+# Balance validation functions
+# ------------------------------------------------------------
+check_balance() {
+  local private_key=$1
+  local description=$2
+  
+  # Get address from private key
+  local address=$(cast wallet address "$private_key" 2>/dev/null || echo "ERROR")
+  if [ "$address" = "ERROR" ]; then
+    echo "[runner] ERROR: Invalid private key for $description"
+    return 1
+  fi
+  
+  # Get ETH balance
+  local eth_balance=$(cast balance "$address" --rpc-url "$HTTP_RPC" 2>/dev/null || echo "0")
+  local eth_balance_ether=$(cast to-unit "$eth_balance" ether 2>/dev/null || echo "0")
+  
+  # Get token balance if TOKEN_CONTRACT is set
+  local token_balance="0"
+  if [ -n "$TOKEN_CONTRACT" ]; then
+    token_balance=$(cast call "$TOKEN_CONTRACT" "balanceOf(address)(uint256)" "$address" --rpc-url "$HTTP_RPC" 2>/dev/null || echo "0")
+  fi
+  
+  echo "[runner] $description ($address): ${eth_balance_ether} ETH, ${token_balance} tokens"
+  
+  # Check minimum balances (0.01 ETH, 10000 tokens)
+  local min_eth_wei="10000000000000000"  # 0.01 ETH in wei
+  local min_tokens="10000000000"         # 10000 tokens (assuming 6 decimals)
+  
+  local has_sufficient_eth=false
+  local has_sufficient_tokens=false
+  
+  if (( eth_balance >= min_eth_wei )); then
+    has_sufficient_eth=true
+  fi
+  
+  if (( token_balance >= min_tokens )); then
+    has_sufficient_tokens=true
+  fi
+  
+  if [ "$has_sufficient_eth" = false ] || [ "$has_sufficient_tokens" = false ]; then
+    echo "[runner] WARNING: $description has insufficient balance"
+    [ "$has_sufficient_eth" = false ] && echo "  - Need at least 0.01 ETH for gas fees"
+    [ "$has_sufficient_tokens" = false ] && echo "  - Need at least 10000 tokens for escrow funding"
+    return 1
+  fi
+  
+  return 0
+}
+
+# Validate sender key balances
+validate_sender_balances() {
+  if [ ${#SENDER_KEYS[@]} -eq 0 ]; then
+    echo "[runner] WARNING: No sender keys found. Cannot deploy escrows."
+    echo "Add SENDER_KEY_1, SENDER_KEY_2, etc. to your .env file"
+    return 1
+  fi
+  
+  echo "[runner] Checking sender key balances..."
+  local insufficient_count=0
+  
+  for i in "${!SENDER_KEYS[@]}"; do
+    local key="${SENDER_KEYS[$i]}"
+    if ! check_balance "$key" "Sender key $((i+1))"; then
+      ((insufficient_count++))
+    fi
+  done
+  
+  if [ $insufficient_count -gt 0 ]; then
+    echo
+    echo "[runner] WARNING: $insufficient_count sender key(s) have insufficient balance"
+    read -p "Continue anyway? (y/N): " continue_choice
+    if [[ ! "$continue_choice" =~ ^[Yy]$ ]]; then
+      echo "[runner] Exiting. Please fund the sender keys and try again."
+      exit 1
+    fi
+  fi
+  
+  return 0
+}
 
 # Shuffle the keys array to randomize key assignment
 shuffle_array() {
@@ -77,8 +176,43 @@ RPC_START_PORT=8000
 P2P_START_PORT=9000
 
 # ------------------------------------------------------------
-# 2. Compile once – faster startups for all nodes
+# 2. Validate balances and compile
 # ------------------------------------------------------------
+# Validate sender balances if TOKEN_CONTRACT and HTTP_RPC are set
+if [ -n "$TOKEN_CONTRACT" ] && [ -n "$HTTP_RPC" ]; then
+  validate_sender_balances
+elif [ ${#SENDER_KEYS[@]} -gt 0 ]; then
+  echo "[runner] WARNING: Found sender keys but missing TOKEN_CONTRACT or HTTP_RPC in .env"
+  echo "Cannot validate balances. Set TOKEN_CONTRACT and HTTP_RPC to enable balance checking."
+fi
+
+# Download and compile Escrow contract
+setup_escrow_contract() {
+  local contract_dir="/tmp/escrow_$$"
+  mkdir -p "$contract_dir"
+  
+  echo "[runner] Downloading Escrow contract..."
+  if ! curl -s -L "https://raw.githubusercontent.com/MiragePrivacy/escrow/master/src/Escrow.sol" -o "$contract_dir/Escrow.sol"; then
+    echo "[runner] ERROR: Failed to download Escrow contract"
+    return 1
+  fi
+  
+  echo "[runner] Compiling Escrow contract..."
+  if ! forge build --root "$contract_dir" --contracts "$contract_dir" --out "$contract_dir/out" >/dev/null 2>&1; then
+    echo "[runner] ERROR: Failed to compile Escrow contract"
+    return 1
+  fi
+  
+  # Export path for later use
+  export ESCROW_CONTRACT_DIR="$contract_dir"
+  echo "[runner] Escrow contract ready at $contract_dir"
+}
+
+# Setup escrow contract if we have sender keys
+if [ ${#SENDER_KEYS[@]} -gt 0 ]; then
+  setup_escrow_contract
+fi
+
 cargo build --release
 BIN=./target/release/nomad
 
@@ -183,10 +317,81 @@ for ((i=2; i<=NODE_COUNT; i++)); do
 done
 
 # ------------------------------------------------------------
+# 5. Escrow deployment functions
+# ------------------------------------------------------------
+deploy_escrow() {
+  local sender_key=$1
+  local token_contract=$2
+  
+  if [ -z "$ESCROW_CONTRACT_DIR" ] || [ ! -f "$ESCROW_CONTRACT_DIR/Escrow.sol" ]; then
+    echo "[runner] ERROR: Escrow contract not available"
+    return 1
+  fi
+  
+  echo "[runner] Deploying Escrow contract..."
+  
+  # Deploy the contract
+  local deploy_result=$(cast send --private-key "$sender_key" --rpc-url "$HTTP_RPC" --create --json \
+    "$(cat "$ESCROW_CONTRACT_DIR/out/Escrow.sol/Escrow.json" | jq -r '.bytecode.object')" \
+    --constructor-args "$(cast abi-encode 'constructor(address)' "$token_contract")" 2>/dev/null)
+  
+  if [ $? -ne 0 ] || [ -z "$deploy_result" ]; then
+    echo "[runner] ERROR: Failed to deploy Escrow contract"
+    return 1
+  fi
+  
+  # Extract contract address from deployment result
+  local contract_address=$(echo "$deploy_result" | jq -r '.contractAddress // empty')
+  
+  if [ -z "$contract_address" ] || [ "$contract_address" = "null" ]; then
+    echo "[runner] ERROR: Could not get contract address from deployment"
+    return 1
+  fi
+  
+  echo "$contract_address"
+}
+
+fund_escrow() {
+  local escrow_address=$1
+  local sender_key=$2
+  local reward_amount=$3
+  local payment_amount=$4
+  
+  echo "[runner] Funding escrow $escrow_address with reward: $reward_amount, payment: $payment_amount"
+  
+  # First approve the escrow to spend tokens
+  local total_amount=$((reward_amount + payment_amount))
+  if ! cast send --private-key "$sender_key" --rpc-url "$HTTP_RPC" \
+    "$TOKEN_CONTRACT" "approve(address,uint256)" "$escrow_address" "$total_amount" >/dev/null 2>&1; then
+    echo "[runner] ERROR: Failed to approve escrow for token spending"
+    return 1
+  fi
+  
+  # Fund the escrow
+  if ! cast send --private-key "$sender_key" --rpc-url "$HTTP_RPC" \
+    "$escrow_address" "fund(uint256,uint256)" "$reward_amount" "$payment_amount" >/dev/null 2>&1; then
+    echo "[runner] ERROR: Failed to fund escrow"
+    return 1
+  fi
+  
+  echo "[runner] Escrow funded successfully"
+}
+
+# ------------------------------------------------------------
 # 6. RPC call function with randomized parameters
 # ------------------------------------------------------------
-send_signal() {
+deploy_escrow_and_send_signal() {
   local port=$1
+  
+  # Check if we have sender keys and necessary env vars
+  if [ ${#SENDER_KEYS[@]} -eq 0 ] || [ -z "$TOKEN_CONTRACT" ] || [ -z "$HTTP_RPC" ]; then
+    echo "[runner] Skipping escrow deployment (missing sender keys, TOKEN_CONTRACT, or HTTP_RPC)"
+    return 0
+  fi
+  
+  # Select random sender key
+  local sender_idx=$((RANDOM % ${#SENDER_KEYS[@]}))
+  local sender_key="${SENDER_KEYS[$sender_idx]}"
   
   # Generate random transfer amount between 200-2000 USDT (whole numbers only, in micro units)
   local min_usdt=200
@@ -214,11 +419,40 @@ send_signal() {
   local reward_percentage=$((5 + RANDOM % 21))
   local reward_amount=$((transfer_amount * reward_percentage / 100))
   
-  local data="{\"escrow_contract\":\"0x742d35Cc6670C068c7a5FE1f1014A0C74b7F8E2f\",\"token_contract\":\"$TOKEN_CONTRACT\",\"recipient\":\"$recipient\",\"transfer_amount\":\"$transfer_amount\",\"reward_amount\":\"$reward_amount\",\"acknowledgement_url\":\"http://httpbin.org/post\"}"
+  echo "[runner] Creating escrow for signal to port $port (sender key $((sender_idx + 1)))"
+  echo "[runner]   Transfer: $usdt_amount USDT, Reward: $((reward_amount / 1000000)) USDT, Recipient: $recipient"
+  
+  # Deploy escrow contract
+  local escrow_address
+  escrow_address=$(deploy_escrow "$sender_key" "$TOKEN_CONTRACT")
+  if [ $? -ne 0 ] || [ -z "$escrow_address" ]; then
+    echo "[runner] ERROR: Failed to deploy escrow, skipping signal"
+    return 1
+  fi
+  
+  echo "[runner] Deployed escrow at: $escrow_address"
+  
+  # Fund the escrow
+  if ! fund_escrow "$escrow_address" "$sender_key" "$reward_amount" "$transfer_amount"; then
+    echo "[runner] ERROR: Failed to fund escrow, skipping signal"
+    return 1
+  fi
+  
+  # Send the signal with real escrow address
+  local data="{\"escrow_contract\":\"$escrow_address\",\"token_contract\":\"$TOKEN_CONTRACT\",\"recipient\":\"$recipient\",\"transfer_amount\":\"$transfer_amount\",\"reward_amount\":\"$reward_amount\",\"acknowledgement_url\":\"$ACK_URL\"}"
+  
+  echo "[runner] Sending signal to port $port with escrow $escrow_address"
   
   curl -s -X POST "http://127.0.0.1:$port" \
     -H "Content-Type: application/json" \
     -d "{\"jsonrpc\":\"2.0\",\"method\":\"mirage_signal\",\"params\":[${data}],\"id\":1}" > /dev/null
+  
+  if [ $? -eq 0 ]; then
+    echo "[runner] Signal sent successfully"
+  else
+    echo "[runner] ERROR: Failed to send signal"
+    return 1
+  fi
 }
 
 # ------------------------------------------------------------
@@ -230,8 +464,8 @@ sleep 3
 echo "[runner] sending test signals to all nodes..."
 for ((i=1; i<=NODE_COUNT; i++)); do
   echo "[runner] sending signal to Node $i (port ${RPC_PORTS[$i]})..."
-  send_signal "${RPC_PORTS[$i]}"
-  sleep 1
+  deploy_escrow_and_send_signal "${RPC_PORTS[$i]}"
+  sleep 2  # Increased delay for contract deployment
 done
 
 # ------------------------------------------------------------
@@ -259,6 +493,11 @@ cleanup() {
   
   # Clean up log file
   rm -f "$LOG1" 2>/dev/null || true
+  
+  # Clean up contract directory
+  if [ -n "$ESCROW_CONTRACT_DIR" ] && [ -d "$ESCROW_CONTRACT_DIR" ]; then
+    rm -rf "$ESCROW_CONTRACT_DIR" 2>/dev/null || true
+  fi
   
   echo "[runner] cleanup complete"
   exit 0
