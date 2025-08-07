@@ -81,7 +81,8 @@ call_token_faucet() {
     
     # Get updated balance to confirm
     local address=$(cast wallet address "$private_key" 2>/dev/null)
-    local new_balance=$(cast call "$TOKEN_CONTRACT" "balanceOf(address)(uint256)" "$address" --rpc-url "$RPC" 2>/dev/null || echo "0")
+    local raw_balance=$(cast call "$TOKEN_CONTRACT" "balanceOf(address)(uint256)" "$address" --rpc-url "$RPC" 2>/dev/null || echo "0")
+    local new_balance=$(echo "$raw_balance" | awk '{print $1}')
     echo "[runner] New token balance: $new_balance tokens"
     
     # Check if we need more tokens (may need multiple faucet calls)
@@ -98,7 +99,8 @@ call_token_faucet() {
         if cast send --private-key "$private_key" --rpc-url "$RPC" \
           "$TOKEN_CONTRACT" "mint()" >/dev/null 2>&1; then
           ((calls_made++))
-          new_balance=$(cast call "$TOKEN_CONTRACT" "balanceOf(address)(uint256)" "$address" --rpc-url "$RPC" 2>/dev/null || echo "0")
+          local raw_balance_loop=$(cast call "$TOKEN_CONTRACT" "balanceOf(address)(uint256)" "$address" --rpc-url "$RPC" 2>/dev/null || echo "0")
+          new_balance=$(echo "$raw_balance_loop" | awk '{print $1}')
           echo "[runner] Faucet call $calls_made: balance now $new_balance tokens"
         else
           echo "[runner] ERROR: Faucet call $calls_made failed"
@@ -138,7 +140,9 @@ check_balance() {
   # Get token balance if TOKEN_CONTRACT is set
   local token_balance="0"
   if [ -n "$TOKEN_CONTRACT" ]; then
-    token_balance=$(cast call "$TOKEN_CONTRACT" "balanceOf(address)(uint256)" "$address" --rpc-url "$RPC" 2>/dev/null || echo "0")
+    local raw_balance=$(cast call "$TOKEN_CONTRACT" "balanceOf(address)(uint256)" "$address" --rpc-url "$RPC" 2>/dev/null || echo "0")
+    # Extract just the numeric part before any space or bracket
+    token_balance=$(echo "$raw_balance" | awk '{print $1}')
   fi
   
   echo "[runner] $description ($address): ${eth_balance_ether} ETH, ${token_balance} tokens"
@@ -207,7 +211,8 @@ validate_sender_balances() {
       for i in "${!SENDER_KEYS[@]}"; do
         local key="${SENDER_KEYS[$i]}"
         local address=$(cast wallet address "$key" 2>/dev/null)
-        local token_balance=$(cast call "$TOKEN_CONTRACT" "balanceOf(address)(uint256)" "$address" --rpc-url "$RPC" 2>/dev/null || echo "0")
+        local raw_token_balance=$(cast call "$TOKEN_CONTRACT" "balanceOf(address)(uint256)" "$address" --rpc-url "$RPC" 2>/dev/null || echo "0")
+        local token_balance=$(echo "$raw_token_balance" | awk '{print $1}')
         local min_tokens="10000000000"
         
         if (( token_balance < min_tokens )); then
