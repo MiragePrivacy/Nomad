@@ -46,6 +46,11 @@ async fn main() -> anyhow::Result<()> {
 
     let _ = tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
+        .with_target(false)
+        .with_thread_ids(false)
+        .with_file(false)
+        .with_line_number(false)
+        .compact()
         .try_init();
 
     let mut swarm = libp2p::SwarmBuilder::with_new_identity()
@@ -92,7 +97,7 @@ async fn main() -> anyhow::Result<()> {
     if let Some(ref addr) = args.peer {
         let remote: Multiaddr = addr.parse()?;
         swarm.dial(remote)?;
-        info!(peer = %addr, "Dialed peer");
+        info!("🔗 Connected to peer: {}", addr);
     }
 
     let (signal_tx, mut signal_rx) = mpsc::unbounded_channel();
@@ -123,7 +128,7 @@ async fn main() -> anyhow::Result<()> {
                 .connect_provider(http_provider),
         ))
     } else {
-        debug!("Skipping provider with wallet setup.");
+        info!("👀 Running in read-only mode (no private keys provided)");
         None
     };
 
@@ -139,7 +144,7 @@ async fn main() -> anyhow::Result<()> {
                 .await?;
             }
         } else {
-            debug!("It's not possible to use the faucet without both pk1 and pk2")
+            warn!("⚠️  Cannot use faucet without both pk1 and pk2");
         }
     }
 
@@ -155,7 +160,7 @@ async fn main() -> anyhow::Result<()> {
                                             .behaviour_mut()
                                             .gossipsub
                                             .publish(signal_topic.clone(), serde_json::to_vec(&signal)?) {
-                                        Ok(_) => info!(signal = %signal, "Published signal"),
+                                        Ok(_) => info!("📢 Published signal: {}", signal),
                                         Err(gossipsub::PublishError::Duplicate) => {
                                                 debug!(signal = %signal, "Signal already published (duplicate)");
                                             }
@@ -168,12 +173,12 @@ async fn main() -> anyhow::Result<()> {
                         warn!(%e, "failed to process signal");
                     }
                 } else {
-                    debug!("Skipping signal; running in read-only mode");
+                    info!("👀 Read-only mode: forwarding signal without processing");
                     match swarm
                     .behaviour_mut()
                     .gossipsub
                     .publish(signal_topic.clone(), serde_json::to_vec(&signal)?) {
-                Ok(_) => info!(signal = %signal, "Published signal"),
+                Ok(_) => info!("📢 Published signal: {}", signal),
                 Err(gossipsub::PublishError::Duplicate) => {
                         debug!(signal = %signal, "Signal already published (duplicate)");
                     }
@@ -184,16 +189,15 @@ async fn main() -> anyhow::Result<()> {
 
             event = swarm.select_next_some() => match event {
                 SwarmEvent::NewListenAddr { address, .. } =>
-                    println!("Listening on {address:?}"),
+                    info!("🚀 Node listening on {}", address),
 
                 SwarmEvent::Behaviour(GossipBehaviorEvent::Gossipsub(gossipsub::Event::Message { message, propagation_source, ..})) => {
                     match message.topic {
                         t if t == signal_topic.hash() => {
                             match serde_json::from_slice::<Signal>(&message.data) {
                                 Ok(received_signal) => {
-                                    info!(signal = %received_signal, "Received signal gossip");
-                                    let source = format!("The source peer id is {:#?}", propagation_source);
-                                    info!(source);
+                                    info!("📨 Received signal: {}", received_signal);
+                                    info!("👤 From peer: {:?}", propagation_source);
                                     if let Some((ref s1, ref s2)) = *signers {
                                         let process_result = process_signal(&received_signal, provider_with_wallet.clone().unwrap().clone(), s1, s2).await;
                                         if let Ok(processing_status) = process_result {
@@ -203,7 +207,7 @@ async fn main() -> anyhow::Result<()> {
                                                                 .behaviour_mut()
                                                                 .gossipsub
                                                                 .publish(signal_topic.clone(), serde_json::to_vec(&received_signal)?) {
-                                                            Ok(_) => info!(signal = %received_signal, "Published signal"),
+                                                            Ok(_) => info!("📢 Published signal: {}", received_signal),
                                                             Err(gossipsub::PublishError::Duplicate) => {
                                                                     debug!(signal = %received_signal, "Signal already published (duplicate)");
                                                                 }
@@ -216,12 +220,12 @@ async fn main() -> anyhow::Result<()> {
                                             warn!(%e, "failed to process signal");
                                         }
                                     } else {
-                                        debug!("Skipping signal; running in read-only mode");
+                                        info!("👀 Read-only mode: forwarding received signal");
                                         match swarm
                                         .behaviour_mut()
                                         .gossipsub
                                         .publish(signal_topic.clone(), serde_json::to_vec(&received_signal)?) {
-                                    Ok(_) => info!(signal = %received_signal, "Published signal"),
+                                    Ok(_) => info!("📢 Published signal: {}", received_signal),
                                     Err(gossipsub::PublishError::Duplicate) => {
                                             debug!(signal = %received_signal, "Signal already published (duplicate)");
                                         }
@@ -255,14 +259,14 @@ pub async fn process_signal<P: Provider>(
     let ether_balance_1 = provider_with_wallet.get_balance(addr_1).await?;
     let addr_2 = signer2.address();
     let ether_balance_2 = provider_with_wallet.get_balance(addr_2).await?;
-    info!(%ether_balance_1, "current eth balance with address one");
-    info!(%ether_balance_2, "current eth balance with address two");
+    info!("💰 Address 1 ETH balance: {} ETH", ether_balance_1.to_string().parse::<f64>().unwrap_or(0.0) / 1e18);
+    info!("💰 Address 2 ETH balance: {} ETH", ether_balance_2.to_string().parse::<f64>().unwrap_or(0.0) / 1e18);
 
     let token_contract = TokenContract::new(signal.token_contract, &provider_with_wallet);
     let usdt_balance_1 = token_contract.balanceOf(addr_1).call().await?;
     let usdt_balance_2 = token_contract.balanceOf(addr_2).call().await?;
-    info!(%usdt_balance_1, "current usdt balance with address one");
-    info!(%usdt_balance_2, "current usdt balance with address two");
+    info!("🪙 Address 1 token balance: {}", usdt_balance_1);
+    info!("🪙 Address 2 token balance: {}", usdt_balance_2);
     let bond_amount = signal.reward_amount.checked_div(U256::from(2)).unwrap();
 
     let min_eth_balance = U256::from(10_000_000_000_000_000u64); // 0.01 ETH for gas fees
@@ -271,7 +275,7 @@ pub async fn process_signal<P: Provider>(
     let is_already_bonded = escrow.is_bonded().call().await?;
     
     if is_already_bonded {
-        info!("Escrow already bonded, broadcasting signal");
+        info!("⏭️  Escrow already bonded, broadcasting signal to network");
         return Ok(ProcessSignalStatus::Broadcast);
     }
     
@@ -282,19 +286,27 @@ pub async fn process_signal<P: Provider>(
     } else if usdt_balance_1 > signal.transfer_amount && usdt_balance_2 > bond_amount && ether_balance_1 > min_eth_balance && ether_balance_2 > min_eth_balance {
         (signer1, signer2)
     } else {
-        info!("Not enough balance to process the incoming request. Broadcasting...");
+        info!("💸 Insufficient balance to process request, broadcasting to network");
         return Ok(ProcessSignalStatus::Broadcast);
     };
 
     let start_time = Utc::now().to_rfc3339();
+    info!("🚀 Processing signal transactions...");
     
+    info!("1️⃣ Approving tokens for escrow...");
     let approval_tx = token_contract.approve(signal.escrow_contract, bond_amount).from(bond_signer.address()).send().await?;
+    
+    info!("2️⃣ Bonding to escrow...");
     let bond_tx = escrow.bond(bond_amount).from(bond_signer.address()).send().await?;
+    
+    info!("3️⃣ Transferring tokens to recipient...");
     let transfer_tx = token_contract
         .transfer(signal.recipient, signal.transfer_amount)
         .from(transfer_signer.address())
         .send()
         .await?;
+    
+    info!("4️⃣ Collecting from escrow...");
     let collect_tx = escrow.collect().from(bond_signer.address()).send().await?;
     
     let end_time = Utc::now().to_rfc3339();
@@ -315,13 +327,13 @@ pub async fn process_signal<P: Provider>(
         .send()
         .await
     {
-        warn!(%e, url = %signal.acknowledgement_url, "Failed to send receipt");
+        warn!("⚠️  Failed to send receipt to {}: {}", signal.acknowledgement_url, e);
     } else {
-        info!(url = %signal.acknowledgement_url, "Receipt sent successfully");
+        info!("📧 Receipt sent successfully to {}", signal.acknowledgement_url);
     }
     
     info!(
-        "Processed the payment of {} tokens to {}",
+        "✅ Successfully processed payment of {} tokens to {}",
         signal.transfer_amount, signal.recipient
     );
 
@@ -334,19 +346,20 @@ pub async fn call_faucet<P: Provider>(
     signer1: &PrivateKeySigner,
     signer2: &PrivateKeySigner,
 ) -> anyhow::Result<()> {
-    info!("minting tokens.");
+    info!("🚰 Minting tokens from faucet...");
     let token = TokenContract::new(token_addr, &provider_with_wallet);
 
-    // First mint → signed by signer‑1 (default, but we set it explicitly for clarity)
+    info!("🪙 Minting tokens for address 1: {}", signer1.address());
     let a = token
         .mint()
-        .from(signer1.address()) // chooses the key inside the wallet filler
+        .from(signer1.address())
         .send()
         .await?;
-    info!("minted.");
-    // Second mint → signed by signer‑2
+    info!("✅ Mint successful for address 1");
+    
+    info!("🪙 Minting tokens for address 2: {}", signer2.address());
     let b = token.mint().from(signer2.address()).send().await?;
-    info!("minted.");
+    info!("✅ Mint successful for address 2");
     let usdt_balance_1 = token.balanceOf(signer1.address()).call().await?;
     let usdt_balance_2 = token.balanceOf(signer2.address()).call().await?;
 
@@ -359,7 +372,7 @@ fn build_signers(args: &Args) -> anyhow::Result<Option<(PrivateKeySigner, Privat
         (Some(pk1), Some(pk2)) => {
             let s1: PrivateKeySigner = pk1.parse().context("parsing --pk1")?;
             let s2: PrivateKeySigner = pk2.parse().context("parsing --pk2")?;
-            info!("Using addresses: {} and {}", s1.address(), s2.address());
+            info!("🔑 Using wallet addresses: {} and {}", s1.address(), s2.address());
             Ok(Some((s1, s2)))
         }
         // neither present → run in read-only mode
