@@ -275,38 +275,29 @@ pub async fn process_signal<P: Provider>(
     }
     
     // question: do the failures here terminate the program? at most they should only be logged (at least that is the case for the contract interactions)
-    // todo: refactor to avoid repeating the same logic in both if branches
     // todo: make a receipt of the transactions and send back to signal.acknowledgement_url via a POST req
-    if usdt_balance_2 > signal.transfer_amount && usdt_balance_1 > bond_amount && ether_balance_1 > min_eth_balance && ether_balance_2 > min_eth_balance {
-        let _ = token_contract.approve(signal.escrow_contract, bond_amount).from(signer1.address()).send().await?;
-        let _ = escrow.bond(bond_amount).from(signer1.address()).send().await?;
-        let _ = token_contract
-            .transfer(signal.recipient, signal.transfer_amount)
-            .from(signer2.address())
-            .send()
-            .await?;
-        let _ = escrow.collect().from(signer1.address()).send().await?;
-        info!(
-            "Processed the payment of {} tokens to {}",
-            signal.transfer_amount, signal.recipient
-        );
+    
+    let (transfer_signer, bond_signer) = if usdt_balance_2 > signal.transfer_amount && usdt_balance_1 > bond_amount && ether_balance_1 > min_eth_balance && ether_balance_2 > min_eth_balance {
+        (signer2, signer1)
     } else if usdt_balance_1 > signal.transfer_amount && usdt_balance_2 > bond_amount && ether_balance_1 > min_eth_balance && ether_balance_2 > min_eth_balance {
-        let _ = token_contract.approve(signal.escrow_contract, bond_amount).from(signer2.address()).send().await?;
-        let _ = escrow.bond(bond_amount).from(signer2.address()).send().await?;
-        let _ = token_contract
-            .transfer(signal.recipient, signal.transfer_amount)
-            .from(signer1.address())
-            .send()
-            .await?;
-        let _ = escrow.collect().from(signer2.address()).send().await?;
-        info!(
-            "Processed the payment of {} tokens to {}",
-            signal.transfer_amount, signal.recipient
-        );
+        (signer1, signer2)
     } else {
         info!("Not enough balance to process the incoming request. Broadcasting...");
         return Ok(ProcessSignalStatus::Broadcast);
-    }
+    };
+
+    let _ = token_contract.approve(signal.escrow_contract, bond_amount).from(bond_signer.address()).send().await?;
+    let _ = escrow.bond(bond_amount).from(bond_signer.address()).send().await?;
+    let _ = token_contract
+        .transfer(signal.recipient, signal.transfer_amount)
+        .from(transfer_signer.address())
+        .send()
+        .await?;
+    let _ = escrow.collect().from(bond_signer.address()).send().await?;
+    info!(
+        "Processed the payment of {} tokens to {}",
+        signal.transfer_amount, signal.recipient
+    );
 
     Ok(ProcessSignalStatus::Processed)
 }
