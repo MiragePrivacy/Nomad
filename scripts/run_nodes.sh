@@ -80,13 +80,13 @@ check_balance() {
   fi
   
   # Get ETH balance
-  local eth_balance=$(cast balance "$address" --rpc-url "$HTTP_RPC" 2>/dev/null || echo "0")
+  local eth_balance=$(cast balance "$address" --rpc-url "$RPC" 2>/dev/null || echo "0")
   local eth_balance_ether=$(cast to-unit "$eth_balance" ether 2>/dev/null || echo "0")
   
   # Get token balance if TOKEN_CONTRACT is set
   local token_balance="0"
   if [ -n "$TOKEN_CONTRACT" ]; then
-    token_balance=$(cast call "$TOKEN_CONTRACT" "balanceOf(address)(uint256)" "$address" --rpc-url "$HTTP_RPC" 2>/dev/null || echo "0")
+    token_balance=$(cast call "$TOKEN_CONTRACT" "balanceOf(address)(uint256)" "$address" --rpc-url "$RPC" 2>/dev/null || echo "0")
   fi
   
   echo "[runner] $description ($address): ${eth_balance_ether} ETH, ${token_balance} tokens"
@@ -178,12 +178,12 @@ P2P_START_PORT=9000
 # ------------------------------------------------------------
 # 2. Validate balances and compile
 # ------------------------------------------------------------
-# Validate sender balances if TOKEN_CONTRACT and HTTP_RPC are set
-if [ -n "$TOKEN_CONTRACT" ] && [ -n "$HTTP_RPC" ]; then
+# Validate sender balances if TOKEN_CONTRACT and RPC are set
+if [ -n "$TOKEN_CONTRACT" ] && [ -n "$RPC" ]; then
   validate_sender_balances
 elif [ ${#SENDER_KEYS[@]} -gt 0 ]; then
-  echo "[runner] WARNING: Found sender keys but missing TOKEN_CONTRACT or HTTP_RPC in .env"
-  echo "Cannot validate balances. Set TOKEN_CONTRACT and HTTP_RPC to enable balance checking."
+  echo "[runner] WARNING: Found sender keys but missing TOKEN_CONTRACT or RPC in .env"
+  echo "Cannot validate balances. Set TOKEN_CONTRACT and RPC to enable balance checking."
 fi
 
 # Download and compile Escrow contract
@@ -331,7 +331,7 @@ deploy_escrow() {
   echo "[runner] Deploying Escrow contract..."
   
   # Deploy the contract
-  local deploy_result=$(cast send --private-key "$sender_key" --rpc-url "$HTTP_RPC" --create --json \
+  local deploy_result=$(cast send --private-key "$sender_key" --rpc-url "$RPC" --create --json \
     "$(cat "$ESCROW_CONTRACT_DIR/out/Escrow.sol/Escrow.json" | jq -r '.bytecode.object')" \
     --constructor-args "$(cast abi-encode 'constructor(address)' "$token_contract")" 2>/dev/null)
   
@@ -361,14 +361,14 @@ fund_escrow() {
   
   # First approve the escrow to spend tokens
   local total_amount=$((reward_amount + payment_amount))
-  if ! cast send --private-key "$sender_key" --rpc-url "$HTTP_RPC" \
+  if ! cast send --private-key "$sender_key" --rpc-url "$RPC" \
     "$TOKEN_CONTRACT" "approve(address,uint256)" "$escrow_address" "$total_amount" >/dev/null 2>&1; then
     echo "[runner] ERROR: Failed to approve escrow for token spending"
     return 1
   fi
   
   # Fund the escrow
-  if ! cast send --private-key "$sender_key" --rpc-url "$HTTP_RPC" \
+  if ! cast send --private-key "$sender_key" --rpc-url "$RPC" \
     "$escrow_address" "fund(uint256,uint256)" "$reward_amount" "$payment_amount" >/dev/null 2>&1; then
     echo "[runner] ERROR: Failed to fund escrow"
     return 1
@@ -384,8 +384,8 @@ deploy_escrow_and_send_signal() {
   local port=$1
   
   # Check if we have sender keys and necessary env vars
-  if [ ${#SENDER_KEYS[@]} -eq 0 ] || [ -z "$TOKEN_CONTRACT" ] || [ -z "$HTTP_RPC" ]; then
-    echo "[runner] Skipping escrow deployment (missing sender keys, TOKEN_CONTRACT, or HTTP_RPC)"
+  if [ ${#SENDER_KEYS[@]} -eq 0 ] || [ -z "$TOKEN_CONTRACT" ] || [ -z "$RPC" ]; then
+    echo "[runner] Skipping escrow deployment (missing sender keys, TOKEN_CONTRACT, or RPC)"
     return 0
   fi
   
