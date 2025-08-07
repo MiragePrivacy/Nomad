@@ -214,7 +214,7 @@ send_signal() {
   local reward_percentage=$((5 + RANDOM % 21))
   local reward_amount=$((transfer_amount * reward_percentage / 100))
   
-  local data="{\"escrow_contract\":\"0x742d35Cc6670C068c7a5FE1f1014A0C74b7F8E2f\",\"token_contract\":\"$TOKEN_CONTRACT\",\"recipient\":\"$recipient\",\"transfer_amount\":\"$transfer_amount\",\"reward_amount\":\"$reward_amount\"}"
+  local data="{\"escrow_contract\":\"0x742d35Cc6670C068c7a5FE1f1014A0C74b7F8E2f\",\"token_contract\":\"$TOKEN_CONTRACT\",\"recipient\":\"$recipient\",\"transfer_amount\":\"$transfer_amount\",\"reward_amount\":\"$reward_amount\",\"acknowledgement_url\":\"http://httpbin.org/post\"}"
   
   curl -s -X POST "http://127.0.0.1:$port" \
     -H "Content-Type: application/json" \

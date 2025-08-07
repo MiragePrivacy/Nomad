@@ -189,7 +189,7 @@ async fn main() -> anyhow::Result<()> {
 
             event = swarm.select_next_some() => match event {
                 SwarmEvent::NewListenAddr { address, .. } =>
-                    info!("Node listening on {}", address),
+                    info!("Listening on {}", address),
 
                 SwarmEvent::Behaviour(GossipBehaviorEvent::Gossipsub(gossipsub::Event::Message { message, propagation_source, ..})) => {
                     match message.topic {
