@@ -5,6 +5,7 @@ source /home/noderunner/Nomad/.env
 cargo build --release
 
 exec /home/noderunner/Nomad/target/release/nomad \
+    --http-rpc "$HTTP_RPC" \
     --pk1 "$KEY_1" \
     --pk2 "$KEY_2" \
     --rpc-port 8000 \
