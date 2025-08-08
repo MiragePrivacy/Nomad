@@ -17,9 +17,9 @@ struct MirageServer {
 #[async_trait]
 impl MirageRpcServer for MirageServer {
     async fn signal(&self, message: Signal) -> String {
-        info!(signal = %message, "Received signal");
+        info!("Received RPC signal: {}", message);
         let _ = self.signal_tx.send(message.clone());
-        format!("ack: {}", message)
+        format!("Signal acknowledged: {}", message)
     }
 }
 
@@ -36,7 +36,7 @@ pub async fn spawn_rpc_server(
     let server_addr = server.local_addr()?;
     let rpc_server = server.start(MirageServer { signal_tx }.into_rpc());
 
-    println!("Running rpc on {server_addr}");
+    println!("RPC server running on {}", server_addr);
 
     tokio::spawn(rpc_server.stopped());
     Ok(())

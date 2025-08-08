@@ -30,3 +30,4 @@ chrono = { version = "0.4", features = ["clock", "std"] }
 dotenvy = "0.15"
 jsonrpsee = { version = "0.25.1", features = ["full"]}
 serde_json = "1.0.141"
+reqwest = { version = "0.12", features = ["json"] }
