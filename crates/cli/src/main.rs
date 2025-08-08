@@ -9,7 +9,7 @@ use std::{
 use alloy::{
     network::EthereumWallet,
     primitives::{Address, U256},
-    providers::{Provider, ProviderBuilder, WsConnect},
+    providers::{Provider, ProviderBuilder},
     signers::{k256::elliptic_curve::rand_core::le, local::PrivateKeySigner},
     sol,
 };
@@ -102,13 +102,6 @@ async fn main() -> anyhow::Result<()> {
     let (signal_tx, mut signal_rx) = mpsc::unbounded_channel();
     let _ = spawn_rpc_server(signal_tx, args.rpc_port).await;
 
-    let ws = WsConnect::new(&args.ws_rpc);
-    let ws_provider = Arc::new(
-        ProviderBuilder::new()
-            .connect_ws(ws)
-            .await
-            .context("connect ws")?,
-    );
 
     let signers = Arc::new(build_signers(&args)?);
 

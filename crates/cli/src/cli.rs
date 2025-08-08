@@ -24,9 +24,6 @@ pub(crate) struct Args {
     )]
     pub faucet: Option<String>,
 
-    #[arg(long, help = "WebSocket RPC URL for reading blockchain data")]
-    pub ws_rpc: String,
-
     #[arg(long, help = "HTTP RPC URL for sending transactions")]
     pub http_rpc: String,
 }
