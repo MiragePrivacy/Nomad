@@ -37,6 +37,29 @@ pub async fn spawn_rpc_server(
     let rpc_server = server.start(MirageServer { signal_tx }.into_rpc());
 
     println!("RPC server running on {}", server_addr);
+    
+    // Log local and global IP addresses for RPC server
+    let port = server_addr.port();
+    if let Ok(local_ip) = std::process::Command::new("hostname")
+        .arg("-I")
+        .output()
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().split_whitespace().next().unwrap_or("unknown").to_string())
+    {
+        println!("RPC server local network access: {}:{}", local_ip, port);
+    }
+    
+    if let Ok(output) = std::process::Command::new("curl")
+        .arg("-s")
+        .arg("--max-time")
+        .arg("3")
+        .arg("http://ipv4.icanhazip.com")
+        .output()
+    {
+        let global_ip = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !global_ip.is_empty() && global_ip != "unknown" {
+            println!("RPC server global access: {}:{}", global_ip, port);
+        }
+    }
 
     tokio::spawn(rpc_server.stopped());
     Ok(())

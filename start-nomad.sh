@@ -4,7 +4,7 @@ source /home/noderunner/Nomad/.env
 # Compile in release mode first
 cargo build --release
 
-exec /home/noderunner/Nomad/target/release/nomad \
+exec env RUST_LOG=nomad=debug /home/noderunner/Nomad/target/release/nomad \
     --http-rpc "$HTTP_RPC" \
     --pk1 "$KEY_1" \
     --pk2 "$KEY_2" \

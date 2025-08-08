@@ -124,13 +124,13 @@ call_token_faucet() {
   echo "[runner] Calling token faucet for $description..."
   
   # Call the mint function on the token contract (each call gives 1000 tokens)
-  if cast send --private-key "$private_key" --rpc-url "$RPC" \
+  if cast send --private-key "$private_key" --rpc-url "$HTTP_RPC" \
     "$TOKEN_CONTRACT" "mint()" >/dev/null 2>&1; then
     echo "[runner] Faucet call successful - 1000 tokens minted"
     
     # Get updated balance to confirm
     local address=$(cast wallet address "$private_key" 2>/dev/null)
-    local raw_balance=$(cast call "$TOKEN_CONTRACT" "balanceOf(address)(uint256)" "$address" --rpc-url "$RPC" 2>/dev/null || echo "0")
+    local raw_balance=$(cast call "$TOKEN_CONTRACT" "balanceOf(address)(uint256)" "$address" --rpc-url "$HTTP_RPC" 2>/dev/null || echo "0")
     local new_balance=$(echo "$raw_balance" | awk '{print $1}')
     echo "[runner] New token balance: $new_balance tokens"
     
@@ -145,10 +145,10 @@ call_token_faucet() {
       local calls_made=1
       while (( new_balance < min_tokens && calls_made < 15 )); do
         sleep 1  # Brief delay between calls
-        if cast send --private-key "$private_key" --rpc-url "$RPC" \
+        if cast send --private-key "$private_key" --rpc-url "$HTTP_RPC" \
           "$TOKEN_CONTRACT" "mint()" >/dev/null 2>&1; then
           ((calls_made++))
-          local raw_balance_loop=$(cast call "$TOKEN_CONTRACT" "balanceOf(address)(uint256)" "$address" --rpc-url "$RPC" 2>/dev/null || echo "0")
+          local raw_balance_loop=$(cast call "$TOKEN_CONTRACT" "balanceOf(address)(uint256)" "$address" --rpc-url "$HTTP_RPC" 2>/dev/null || echo "0")
           new_balance=$(echo "$raw_balance_loop" | awk '{print $1}')
           echo "[runner] Faucet call $calls_made: balance now $new_balance tokens"
         else
@@ -183,13 +183,13 @@ check_balance() {
   fi
   
   # Get ETH balance
-  local eth_balance=$(cast balance "$address" --rpc-url "$RPC" 2>/dev/null || echo "0")
+  local eth_balance=$(cast balance "$address" --rpc-url "$HTTP_RPC" 2>/dev/null || echo "0")
   local eth_balance_ether=$(cast to-unit "$eth_balance" ether 2>/dev/null || echo "0")
   
   # Get token balance if TOKEN_CONTRACT is set
   local token_balance="0"
   if [ -n "$TOKEN_CONTRACT" ]; then
-    local raw_balance=$(cast call "$TOKEN_CONTRACT" "balanceOf(address)(uint256)" "$address" --rpc-url "$RPC" 2>/dev/null || echo "0")
+    local raw_balance=$(cast call "$TOKEN_CONTRACT" "balanceOf(address)(uint256)" "$address" --rpc-url "$HTTP_RPC" 2>/dev/null || echo "0")
     # Extract just the numeric part before any space or bracket
     token_balance=$(echo "$raw_balance" | awk '{print $1}')
   fi
@@ -260,7 +260,7 @@ validate_sender_balances() {
       for i in "${!SENDER_KEYS[@]}"; do
         local key="${SENDER_KEYS[$i]}"
         local address=$(cast wallet address "$key" 2>/dev/null)
-        local raw_token_balance=$(cast call "$TOKEN_CONTRACT" "balanceOf(address)(uint256)" "$address" --rpc-url "$RPC" 2>/dev/null || echo "0")
+        local raw_token_balance=$(cast call "$TOKEN_CONTRACT" "balanceOf(address)(uint256)" "$address" --rpc-url "$HTTP_RPC" 2>/dev/null || echo "0")
         local token_balance=$(echo "$raw_token_balance" | awk '{print $1}')
         local min_tokens="10000000000"
         
@@ -318,7 +318,7 @@ P2P_START_PORT=9000
 # 2. Validate balances and compile
 # ------------------------------------------------------------
 # Validate sender balances if TOKEN_CONTRACT and RPC are set
-if [ -n "$TOKEN_CONTRACT" ] && [ -n "$RPC" ]; then
+if [ -n "$TOKEN_CONTRACT" ] && [ -n "$HTTP_RPC" ]; then
   validate_sender_balances
 elif [ ${#SENDER_KEYS[@]} -gt 0 ]; then
   echo "[runner] WARNING: Found sender keys but missing TOKEN_CONTRACT or RPC in .env"
@@ -386,7 +386,7 @@ RPC_PORT_1=$((RPC_START_PORT))
 P2P_PORT_1=$((P2P_START_PORT))
 LOG1=$(mktemp)
 
-NODE1_CMD="$BIN --rpc-port $RPC_PORT_1 --p2p-port $P2P_PORT_1"
+NODE1_CMD="$BIN --http-rpc $HTTP_RPC --rpc-port $RPC_PORT_1 --p2p-port $P2P_PORT_1"
 
 # Node 1 gets keys if it's a write node (node number <= WRITE_NODES)
 if [ 1 -le "$WRITE_NODES" ]; then
@@ -431,7 +431,7 @@ for ((i=2; i<=NODE_COUNT; i++)); do
   PEER_ADDR="${NODE_ADDRS[$peer_idx]}"
   
   # Build command with peer connection
-  NODE_CMD="$BIN --rpc-port $RPC_PORT --p2p-port $P2P_PORT $PEER_ADDR"
+  NODE_CMD="$BIN --http-rpc $HTTP_RPC --rpc-port $RPC_PORT --p2p-port $P2P_PORT $PEER_ADDR"
   
   # This node gets keys if it's a write node (node number <= WRITE_NODES)
   if [ $i -le "$WRITE_NODES" ]; then
@@ -524,7 +524,7 @@ deploy_escrow() {
   local deploy_result
   deploy_result=$(timeout 30s env FOUNDRY_DISABLE_NIGHTLY_WARNING=1 cast send \
     --private-key "$sender_key" \
-    --rpc-url "$RPC" \
+    --rpc-url "$HTTP_RPC" \
     --create \
     --json \
     "$full_bytecode" 2>/dev/null)
@@ -554,7 +554,7 @@ deploy_escrow() {
       sleep 3  # Wait for transaction to be mined
       
       local receipt
-      receipt=$(timeout 10s cast receipt "$tx_hash" --rpc-url "$RPC" --json 2>/dev/null)
+      receipt=$(timeout 10s cast receipt "$tx_hash" --rpc-url "$HTTP_RPC" --json 2>/dev/null)
       if [ $? -eq 0 ] && [ -n "$receipt" ]; then
         contract_address=$(echo "$receipt" | jq -r '.contractAddress // empty')
       fi
@@ -589,7 +589,7 @@ fund_escrow() {
   local total_amount=$((reward_amount + payment_amount))
   echo "[runner] Approving escrow to spend $total_amount tokens..."
   
-  local approve_result=$(cast send --private-key "$sender_key" --rpc-url "$RPC" \
+  local approve_result=$(cast send --private-key "$sender_key" --rpc-url "$HTTP_RPC" \
     "$TOKEN_CONTRACT" "approve(address,uint256)" "$escrow_address" "$total_amount" 2>&1)
   
   if [ $? -ne 0 ]; then
@@ -601,7 +601,7 @@ fund_escrow() {
   echo "[runner] Approval successful, now funding escrow..."
   
   # Fund the escrow
-  local fund_result=$(cast send --private-key "$sender_key" --rpc-url "$RPC" \
+  local fund_result=$(cast send --private-key "$sender_key" --rpc-url "$HTTP_RPC" \
     "$escrow_address" "fund(uint256,uint256)" "$reward_amount" "$payment_amount" 2>&1)
   
   if [ $? -ne 0 ]; then
@@ -620,7 +620,7 @@ deploy_escrow_and_send_signal() {
   local port=$1
   
   # Check if we have sender keys and necessary env vars
-  if [ ${#SENDER_KEYS[@]} -eq 0 ] || [ -z "$TOKEN_CONTRACT" ] || [ -z "$RPC" ]; then
+  if [ ${#SENDER_KEYS[@]} -eq 0 ] || [ -z "$TOKEN_CONTRACT" ] || [ -z "$HTTP_RPC" ]; then
     echo "[runner] Skipping escrow deployment (missing sender keys, TOKEN_CONTRACT, or RPC)"
     return 0
   fi

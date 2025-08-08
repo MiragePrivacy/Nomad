@@ -180,8 +180,38 @@ async fn main() -> anyhow::Result<()> {
             }
 
             event = swarm.select_next_some() => match event {
-                SwarmEvent::NewListenAddr { address, .. } =>
-                    info!("Listening on {}", address),
+                SwarmEvent::NewListenAddr { address, .. } => {
+                    info!("Listening on {}", address);
+                    
+                    // Log local and global IP addresses for P2P server
+                    if let Some(port) = address.iter().find_map(|protocol| {
+                        match protocol {
+                            libp2p::multiaddr::Protocol::Tcp(p) => Some(p),
+                            _ => None,
+                        }
+                    }) {
+                        if let Ok(local_ip) = std::process::Command::new("hostname")
+                            .arg("-I")
+                            .output()
+                            .map(|output| String::from_utf8_lossy(&output.stdout).trim().split_whitespace().next().unwrap_or("unknown").to_string())
+                        {
+                            info!("P2P server local network access: {}:{}", local_ip, port);
+                        }
+                        
+                        if let Ok(output) = std::process::Command::new("curl")
+                            .arg("-s")
+                            .arg("--max-time")
+                            .arg("3")
+                            .arg("http://ipv4.icanhazip.com")
+                            .output()
+                        {
+                            let global_ip = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                            if !global_ip.is_empty() && global_ip != "unknown" {
+                                info!("P2P server global access: {}:{}", global_ip, port);
+                            }
+                        }
+                    }
+                },
 
                 SwarmEvent::Behaviour(GossipBehaviorEvent::Gossipsub(gossipsub::Event::Message { message, propagation_source, ..})) => {
                     match message.topic {
