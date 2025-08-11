@@ -10,10 +10,9 @@ use alloy::{
     network::EthereumWallet,
     primitives::{Address, U256},
     providers::{Provider, ProviderBuilder},
-    signers::{k256::elliptic_curve::rand_core::le, local::PrivateKeySigner},
-    sol,
+    signers::local::PrivateKeySigner,
 };
-use anyhow::Context as _;
+use anyhow::Context;
 use chrono::Utc;
 use clap::Parser;
 use futures::StreamExt;
@@ -22,7 +21,6 @@ use libp2p::{
     swarm::{NetworkBehaviour, SwarmEvent},
     tcp, yamux, Multiaddr,
 };
-use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::{debug, info, instrument, warn};
 use tracing_subscriber::EnvFilter;
@@ -146,20 +144,17 @@ async fn main() -> anyhow::Result<()> {
                 if let Some((ref s1, ref s2)) = *signers {
                     let process_result = process_signal(&signal, provider_with_wallet.clone().unwrap().clone(), s1, s2).await;
                     if let Ok(processing_status) = process_result {
-                        match processing_status {
-                            ProcessSignalStatus::Broadcast => {
-                                match swarm
-                                            .behaviour_mut()
-                                            .gossipsub
-                                            .publish(signal_topic.clone(), serde_json::to_vec(&signal)?) {
-                                        Ok(_) => info!("Published signal: {}", signal),
-                                        Err(gossipsub::PublishError::Duplicate) => {
-                                                debug!(signal = %signal, "Signal already published (duplicate)");
-                                            }
-                                        Err(e) => return Err(e.into()),
-                                    }
-                            }
-                            _ => {}
+                        if processing_status == ProcessSignalStatus::Broadcast {
+                            match swarm
+                                        .behaviour_mut()
+                                        .gossipsub
+                                        .publish(signal_topic.clone(), serde_json::to_vec(&signal)?) {
+                                    Ok(_) => info!("Published signal: {}", signal),
+                                    Err(gossipsub::PublishError::Duplicate) => {
+                                            debug!(signal = %signal, "Signal already published (duplicate)");
+                                        }
+                                    Err(e) => return Err(e.into()),
+                                }
                         }
                     } else if let Err(e) = process_result {
                         warn!(%e, "failed to process signal");
@@ -193,7 +188,7 @@ async fn main() -> anyhow::Result<()> {
                         if let Ok(local_ip) = std::process::Command::new("hostname")
                             .arg("-I")
                             .output()
-                            .map(|output| String::from_utf8_lossy(&output.stdout).trim().split_whitespace().next().unwrap_or("unknown").to_string())
+                            .map(|output| String::from_utf8_lossy(&output.stdout).split_whitespace().next().unwrap_or("unknown").to_string())
                         {
                             info!("P2P server local network access: {}:{}", local_ip, port);
                         }
@@ -223,20 +218,17 @@ async fn main() -> anyhow::Result<()> {
                                     if let Some((ref s1, ref s2)) = *signers {
                                         let process_result = process_signal(&received_signal, provider_with_wallet.clone().unwrap().clone(), s1, s2).await;
                                         if let Ok(processing_status) = process_result {
-                                            match processing_status {
-                                                ProcessSignalStatus::Broadcast => {
-                                                    match swarm
-                                                                .behaviour_mut()
-                                                                .gossipsub
-                                                                .publish(signal_topic.clone(), serde_json::to_vec(&received_signal)?) {
-                                                            Ok(_) => info!("Published signal: {}", received_signal),
-                                                            Err(gossipsub::PublishError::Duplicate) => {
-                                                                    debug!(signal = %received_signal, "Signal already published (duplicate)");
-                                                                }
-                                                            Err(e) => return Err(e.into()),
-                                                        }
-                                                }
-                                                _ => {}
+                                            if processing_status == ProcessSignalStatus::Broadcast {
+                                                match swarm
+                                                            .behaviour_mut()
+                                                            .gossipsub
+                                                            .publish(signal_topic.clone(), serde_json::to_vec(&received_signal)?) {
+                                                        Ok(_) => info!("Published signal: {}", received_signal),
+                                                        Err(gossipsub::PublishError::Duplicate) => {
+                                                                debug!(signal = %received_signal, "Signal already published (duplicate)");
+                                                            }
+                                                        Err(e) => return Err(e.into()),
+                                                    }
                                             }
                                         } else if let Err(e) = process_result {
                                             warn!(%e, "failed to process signal");
@@ -379,10 +371,10 @@ pub async fn process_signal<P: Provider>(
     let receipt = ReceiptFormat {
         start_time,
         end_time,
-        approval_transaction_hash: format!("{:?}", approval_tx),
-        bond_transaction_hash: format!("{:?}", bond_tx),
-        transfer_transaction_hash: format!("{:?}", transfer_tx),
-        collection_transaction_hash: format!("{:?}", collect_tx),
+        approval_transaction_hash: format!("{approval_tx:?}"),
+        bond_transaction_hash: format!("{bond_tx:?}"),
+        transfer_transaction_hash: format!("{transfer_tx:?}"),
+        collection_transaction_hash: format!("{collect_tx:?}"),
     };
 
     let client = reqwest::Client::new();
@@ -421,14 +413,14 @@ pub async fn call_faucet<P: Provider>(
     let token = TokenContract::new(token_addr, &provider_with_wallet);
 
     info!("Minting tokens for address 1: {}", signer1.address());
-    let a = token.mint().from(signer1.address()).send().await?;
+    let _a = token.mint().from(signer1.address()).send().await?;
     info!("Mint successful for address 1");
 
     info!("Minting tokens for address 2: {}", signer2.address());
-    let b = token.mint().from(signer2.address()).send().await?;
+    let _b = token.mint().from(signer2.address()).send().await?;
     info!("Mint successful for address 2");
-    let usdt_balance_1 = token.balanceOf(signer1.address()).call().await?;
-    let usdt_balance_2 = token.balanceOf(signer2.address()).call().await?;
+    let _usdt_balance_1 = token.balanceOf(signer1.address()).call().await?;
+    let _usdt_balance_2 = token.balanceOf(signer2.address()).call().await?;
 
     Ok(())
 }
