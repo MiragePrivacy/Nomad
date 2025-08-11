@@ -100,7 +100,6 @@ async fn main() -> anyhow::Result<()> {
     let (signal_tx, mut signal_rx) = mpsc::unbounded_channel();
     let _ = spawn_rpc_server(signal_tx, args.rpc_port).await;
 
-
     let signers = Arc::new(build_signers(&args)?);
 
     let provider_with_wallet = if let Some((ref s1, ref s2)) = *signers {
@@ -177,7 +176,7 @@ async fn main() -> anyhow::Result<()> {
             event = swarm.select_next_some() => match event {
                 SwarmEvent::NewListenAddr { address, .. } => {
                     info!("Listening on {}", address);
-                    
+
                     // Log local and global IP addresses for P2P server
                     if let Some(port) = address.iter().find_map(|protocol| {
                         match protocol {
@@ -192,7 +191,7 @@ async fn main() -> anyhow::Result<()> {
                         {
                             info!("P2P server local network access: {}:{}", local_ip, port);
                         }
-                        
+
                         if let Ok(output) = std::process::Command::new("curl")
                             .arg("-s")
                             .arg("--max-time")
