@@ -70,4 +70,3 @@ pub async fn spawn_rpc_server(
     tokio::spawn(rpc_server.stopped());
     Ok(())
 }
-

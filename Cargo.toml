@@ -11,7 +11,7 @@ edition = "2021"
 [workspace.dependencies]
 clap = { version = "4.5.37", features = ["derive"] }
 anyhow = "1.0.98"
-toml = "0.8.22"
+toml = "0.9.5"
 serde = { version = "1.0", features = ["derive"] }
 libp2p = { version = "0.56", features = [
     "noise",

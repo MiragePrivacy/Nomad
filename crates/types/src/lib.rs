@@ -1,4 +1,7 @@
-use alloy::{primitives::{Address, U256}, sol};
+use alloy::{
+    primitives::{Address, U256},
+    sol,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize, Serialize, Clone)]
@@ -45,7 +48,7 @@ sol! {
         function bond(uint256 _bondAmount) public;
         function collect() public;
         function is_bonded() public view returns (bool);
-    }    
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
