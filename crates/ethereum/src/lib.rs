@@ -63,15 +63,26 @@ impl<P: Provider + Clone> EthClient<P> {
         Self { provider, accounts }
     }
 
+    /// Validate the escrow contract for a given signal. Checks:
+    /// - bytecode on-chain should match expected obfuscation output
+    /// - escrow contract is not bonded yet
     pub async fn validate_contract(
         &self,
         signal: Signal,
         obfuscated: Vec<u8>,
     ) -> Result<(), ClientError> {
+        // Ensure expected bytecode matches on-chain bytecode
         let bytecode = self.provider.get_code_at(signal.escrow_contract).await?;
         if bytecode != obfuscated {
             return Err(ClientError::InvalidBytecode);
         }
+
+        // Ensure escrow contract is not bonded yet
+        let escrow = Escrow::new(signal.escrow_contract, &self.provider);
+        if escrow.is_bonded().call().await? {
+            return Err(ClientError::AlreadyBonded);
+        }
+
         Ok(())
     }
 
@@ -96,7 +107,7 @@ impl<P: Provider + Clone> EthClient<P> {
             .connect_provider(&self.provider);
         let escrow = Escrow::new(signal.escrow_contract, &provider);
 
-        // Check if escrow is bonded yet
+        // Double check escrow is not bonded yet
         if escrow.is_bonded().call().await? {
             return Err(ClientError::AlreadyBonded);
         }
@@ -118,6 +129,8 @@ impl<P: Provider + Clone> EthClient<P> {
 
         // Send bond call
         let bond = escrow.bond(bond_amount).send().await?.get_receipt().await?;
+
+        // TODO: revert approval if bond failed for any reason
 
         Ok((approve, bond))
     }
