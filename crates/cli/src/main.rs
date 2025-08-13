@@ -5,7 +5,7 @@ use alloy::{
     providers::{Provider, ProviderBuilder},
     signers::local::PrivateKeySigner,
 };
-use anyhow::Context;
+use anyhow::{anyhow, Context};
 use chrono::Utc;
 use clap::Parser;
 use tokio::sync::mpsc;
@@ -16,6 +16,7 @@ use nomad_ethereum::*;
 use nomad_p2p::*;
 use nomad_rpc::*;
 use nomad_types::*;
+use nomad_vm::*;
 
 mod cli;
 
@@ -57,10 +58,11 @@ async fn main() -> anyhow::Result<()> {
         signal_rx,
         signal_pool.clone(),
     );
+    let socket = spawn_vm_thread();
 
     loop {
         let signal = signal_pool.sample().await;
-        if let Err(e) = handle_signal(signal, &eth_client).await {
+        if let Err(e) = handle_signal(signal, &eth_client, &socket).await {
             warn!("failed to handle signal: {e}");
         }
     }
@@ -70,11 +72,19 @@ async fn main() -> anyhow::Result<()> {
 async fn handle_signal<P: Provider + Clone>(
     signal: Signal,
     eth_client: &EthClient<P>,
+    vm_socket: &VmSocket,
 ) -> anyhow::Result<()> {
     let start_time = Utc::now().to_rfc3339();
 
+    // TODO: Include the puzzle bytes in the signal payload
+    info!("[0/3] Executing puzzle in vm");
+    let puzzle = Vec::new();
+    let _k2 = vm_socket
+        .run(puzzle)
+        .await
+        .map_err(|_| anyhow!("failed to execute puzzle"))?;
+
     // TODO:
-    //   - use VM to solve puzzle for k2
     //   - get k1 from relayer
     //   - decrypt signal
     //   - verify escrow contract by re-obfuscating and comparing results

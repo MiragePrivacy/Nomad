@@ -1,0 +1,7 @@
+[package]
+name = "nomad-vm"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+affair = "0.1.2"

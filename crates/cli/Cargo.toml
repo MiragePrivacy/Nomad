@@ -10,6 +10,7 @@ path = "src/main.rs"
 [dependencies]
 nomad-types = { path = "../types" }
 nomad-core = { path = "../core" }
+nomad-vm = { path = "../vm" }
 nomad-rpc = { path = "../rpc" }
 nomad-p2p = { path = "../p2p" }
 nomad-ethereum = { path = "../ethereum" }
