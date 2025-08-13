@@ -1,6 +1,6 @@
 use alloy::{
     network::EthereumWallet,
-    primitives::Address,
+    primitives::{Address, U256},
     providers::{Provider, ProviderBuilder},
     rpc::types::TransactionReceipt,
     signers::local::PrivateKeySigner,
@@ -57,19 +57,36 @@ impl<P: Provider + Clone> EthClient<P> {
         &self,
         eoa_1: usize,
         signal: Signal,
-    ) -> Result<TransactionReceipt, ClientError> {
+    ) -> Result<(TransactionReceipt, TransactionReceipt), ClientError> {
         let provider = ProviderBuilder::new()
             .wallet(&self.accounts[eoa_1].0)
             .connect_provider(&self.provider);
+        let escrow = Escrow::new(signal.escrow_contract, &provider);
 
-        let receipt = Escrow::new(signal.escrow_contract, provider)
-            .bond(signal.reward_amount)
+        // Check if escrow is bonded yet
+        if escrow.is_bonded().call().await? {
+            return Err(ClientError::AlreadyBonded);
+        }
+
+        let bond_amount = signal
+            .reward_amount
+            .checked_mul(U256::from(52))
+            .unwrap()
+            .checked_div(U256::from(100))
+            .unwrap();
+
+        // Approve bond amount
+        let approve = TokenContract::new(signal.token_contract, &provider)
+            .approve(signal.escrow_contract, bond_amount)
             .send()
             .await?
             .get_receipt()
             .await?;
 
-        Ok(receipt)
+        // Send bond call
+        let bond = escrow.bond(bond_amount).send().await?.get_receipt().await?;
+
+        Ok((approve, bond))
     }
 
     /// Construct and execute a transfer call from the signal
@@ -77,7 +94,7 @@ impl<P: Provider + Clone> EthClient<P> {
         &self,
         eoa_2: usize,
         signal: Signal,
-    ) -> Result<proof::ProofBlob, ClientError> {
+    ) -> Result<(TransactionReceipt, proof::ProofBlob), ClientError> {
         let provider = ProviderBuilder::new()
             .wallet(&self.accounts[eoa_2].0)
             .connect_provider(&self.provider);
@@ -89,12 +106,15 @@ impl<P: Provider + Clone> EthClient<P> {
             .get_receipt()
             .await?;
 
-        self.generate_proof(
-            receipt.block_hash.unwrap(),
-            receipt.transaction_index.unwrap(),
-            None,
-        )
-        .await
+        let proof = self
+            .generate_proof(
+                receipt.block_hash.unwrap(),
+                receipt.transaction_index.unwrap(),
+                None,
+            )
+            .await?;
+
+        Ok((receipt, proof))
     }
 
     /// Collect a reward by submitting proof for a signal
