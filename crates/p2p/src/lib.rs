@@ -32,6 +32,7 @@ pub fn spawn_p2p(
     mut rx: UnboundedReceiver<Signal>,
     signal_pool: SignalPool,
 ) -> anyhow::Result<()> {
+    // Setup the swarm
     let mut swarm = libp2p::SwarmBuilder::with_new_identity()
         .with_tokio()
         .with_tcp(
@@ -60,12 +61,13 @@ pub fn spawn_p2p(
         .with_swarm_config(|cfg| cfg.with_idle_connection_timeout(Duration::from_secs(u64::MAX)))
         .build();
 
+    // Subscribe to topics
     let block_topic = gossipsub::IdentTopic::new("eth-blocks");
-    swarm.behaviour_mut().gossipsub.subscribe(&block_topic)?;
-
     let signal_topic = gossipsub::IdentTopic::new("mirage-signals");
+    swarm.behaviour_mut().gossipsub.subscribe(&block_topic)?;
     swarm.behaviour_mut().gossipsub.subscribe(&signal_topic)?;
 
+    // Bind to p2p port
     swarm.listen_on(format!("/ip4/0.0.0.0/tcp/{}", config.tcp).parse().unwrap())?;
 
     // Connect to bootstrap nodes
@@ -74,6 +76,7 @@ pub fn spawn_p2p(
         info!("Connected to peer: {peer}");
     }
 
+    // Spawn the main event loop
     tokio::spawn(async move {
         let handle_swarm_event = |event| async {
             match event {
@@ -95,7 +98,6 @@ pub fn spawn_p2p(
                         }
                     }
                 }
-
                 SwarmEvent::Behaviour(GossipBehaviorEvent::Gossipsub(
                     gossipsub::Event::Message {
                         message,
@@ -110,6 +112,7 @@ pub fn spawn_p2p(
                                     peer = propagation_source.to_string(),
                                     "Received signal: {signal}"
                                 );
+                                // Insert signal to the pool
                                 if !signal_pool.insert(signal).await {
                                     warn!(
                                         peer = propagation_source.to_string(),
@@ -127,7 +130,6 @@ pub fn spawn_p2p(
                         "Received unrecognized message"
                     ),
                 },
-
                 _ => {}
             }
         };
@@ -135,13 +137,16 @@ pub fn spawn_p2p(
         loop {
             tokio::select! {
                 // Handle libp2p events
+                biased;
                 event = swarm.select_next_some() => handle_swarm_event(event).await,
 
                 // Handle incoming signals
                 Some(signal) = rx.recv() => {
                     let encoded = serde_json::to_vec(&signal).unwrap();
+
                     // insert into our own signal pool
                     signal_pool.insert(signal).await;
+
                     // publish signal to the network
                     if let Err(e) = swarm.behaviour_mut().gossipsub.publish(signal_topic.clone(), encoded) {
                         warn!(%e, "Failed to publish outgoing signal");
