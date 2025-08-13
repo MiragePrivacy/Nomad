@@ -1,7 +1,10 @@
 use alloy::{
     network::EthereumWallet,
     primitives::{Address, U256},
-    providers::{Provider, ProviderBuilder},
+    providers::{
+        fillers::{BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller},
+        Identity, Provider, ProviderBuilder, RootProvider,
+    },
     rpc::types::TransactionReceipt,
     signers::local::PrivateKeySigner,
     sol,
@@ -29,8 +32,20 @@ sol! {
     }
 }
 
-pub struct EthClient<P: Provider + Clone> {
-    provider: P,
+pub struct EthConfig {
+    pub rpc: String,
+}
+
+type BaseProvider = FillProvider<
+    JoinFill<
+        Identity,
+        JoinFill<GasFiller, JoinFill<BlobGasFiller, JoinFill<NonceFiller, ChainIdFiller>>>,
+    >,
+    RootProvider,
+>;
+
+pub struct EthClient {
+    provider: BaseProvider,
     accounts: Vec<(EthereumWallet, Address)>,
 }
 
@@ -50,8 +65,11 @@ pub enum ClientError {
     InvalidBytecode,
 }
 
-impl<P: Provider + Clone> EthClient<P> {
-    pub fn new(provider: P, accounts: Vec<PrivateKeySigner>) -> Self {
+impl EthClient {
+    pub async fn new(
+        config: EthConfig,
+        accounts: Vec<PrivateKeySigner>,
+    ) -> Result<Self, ClientError> {
         let accounts = accounts
             .into_iter()
             .map(|sk| {
@@ -60,7 +78,8 @@ impl<P: Provider + Clone> EthClient<P> {
                 (wallet, address)
             })
             .collect();
-        Self { provider, accounts }
+        let provider = ProviderBuilder::new().connect(&config.rpc).await?;
+        Ok(Self { provider, accounts })
     }
 
     /// Validate the escrow contract for a given signal. Checks:

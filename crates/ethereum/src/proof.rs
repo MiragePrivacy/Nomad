@@ -34,7 +34,7 @@ pub struct ProofBlob {
     pub target_log: Option<Log>,
 }
 
-impl<P: Provider + Clone> EthClient<P> {
+impl EthClient {
     /// Creates a new `ProofInput` with the given block hash, transaction index, and optional log index.
     pub(crate) async fn generate_proof(
         &self,

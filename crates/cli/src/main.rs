@@ -1,10 +1,6 @@
 use std::sync::Arc;
 
-use alloy::{
-    primitives::Address,
-    providers::{Provider, ProviderBuilder},
-    signers::local::PrivateKeySigner,
-};
+use alloy::{primitives::Address, providers::Provider, signers::local::PrivateKeySigner};
 use anyhow::{anyhow, Context};
 use chrono::Utc;
 use clap::Parser;
@@ -48,13 +44,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Build eth clients
     let signers = build_signers(&args)?;
-    let eth_client = EthClient::new(
-        ProviderBuilder::new()
-            .connect(&args.http_rpc)
-            .await
-            .context("connect http")?,
-        signers,
-    );
+    let eth_client = EthClient::new(EthConfig { rpc: args.http_rpc }, signers).await?;
 
     // Setup background server tasks, shared signal pool
     let signal_pool = SignalPool::new();
@@ -88,9 +78,9 @@ async fn main() -> anyhow::Result<()> {
 }
 
 /// Process signals sampled from the pool
-async fn handle_signal<P: Provider + Clone>(
+async fn handle_signal(
     signal: Signal,
-    eth_client: &EthClient<P>,
+    eth_client: &EthClient,
     vm_socket: &VmSocket,
 ) -> anyhow::Result<()> {
     let start_time = Utc::now().to_rfc3339();
