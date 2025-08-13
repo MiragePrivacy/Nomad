@@ -11,7 +11,7 @@ use libp2p::{
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedReceiver;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use nomad_core::SignalPool;
 use nomad_types::Signal;
@@ -42,6 +42,8 @@ pub fn spawn_p2p(
     mut rx: UnboundedReceiver<Signal>,
     signal_pool: SignalPool,
 ) -> anyhow::Result<()> {
+    debug!(?config);
+
     // Setup the swarm
     let mut swarm = libp2p::SwarmBuilder::with_new_identity()
         .with_tokio()

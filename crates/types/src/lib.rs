@@ -30,3 +30,13 @@ impl std::fmt::Display for Signal {
         )
     }
 }
+
+impl std::fmt::Debug for Signal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Signal")
+            .field("Token", &self.token_contract)
+            .field("Amount", &self.transfer_amount)
+            .field("Reward", &self.reward_amount)
+            .finish()
+    }
+}

@@ -13,6 +13,7 @@ use alloy::{
 use serde::{Deserialize, Serialize};
 
 use nomad_types::Signal;
+use tracing::debug;
 
 mod proof;
 
@@ -80,6 +81,7 @@ impl EthClient {
         config: EthConfig,
         accounts: Vec<PrivateKeySigner>,
     ) -> Result<Self, ClientError> {
+        debug!(?config);
         let accounts = accounts
             .into_iter()
             .map(|sk| {
