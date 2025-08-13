@@ -58,11 +58,11 @@ async fn main() -> anyhow::Result<()> {
         signal_rx,
         signal_pool.clone(),
     );
-    let socket = spawn_vm_thread();
+    let vm_socket = NomadVm::new().spawn();
 
     loop {
         let signal = signal_pool.sample().await;
-        if let Err(e) = handle_signal(signal, &eth_client, &socket).await {
+        if let Err(e) = handle_signal(signal, &eth_client, &vm_socket).await {
             warn!("failed to handle signal: {e}");
         }
     }
