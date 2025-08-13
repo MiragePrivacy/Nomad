@@ -9,25 +9,10 @@ version = "0.1.0"
 edition = "2021"
 
 [workspace.dependencies]
-clap = { version = "4.5.37", features = ["derive"] }
+alloy = { version = "1.0.23", features = ["full"]}
 anyhow = "1.0.98"
-toml = "0.9.5"
+futures = "0.3.30"
 serde = { version = "1.0", features = ["derive"] }
-libp2p = { version = "0.56", features = [
-    "noise",
-    "gossipsub",
-    "macros",
-    "tcp",
-    "tokio",
-    "yamux",
-] }
 tokio = { version = "1.46.0", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-futures = "0.3.30"
-alloy = { version = "1.0.23", features = ["full"]}
-chrono = { version = "0.4", features = ["clock", "std"] }
-dotenvy = "0.15"
-jsonrpsee = { version = "0.25.1", features = ["full"]}
-serde_json = "1.0.141"
-reqwest = { version = "0.12", features = ["json"] }

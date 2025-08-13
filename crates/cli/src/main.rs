@@ -22,7 +22,6 @@ mod config;
 #[instrument]
 async fn main() -> anyhow::Result<()> {
     // Parse cli arguments and app setup
-    dotenvy::dotenv().ok();
     let args = cli::Args::parse();
 
     // Setup logging filters

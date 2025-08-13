@@ -1,11 +1,11 @@
 use alloy::{
+    consensus::{Receipt, ReceiptEnvelope, ReceiptWithBloom, TxType},
     eips::Encodable2718 as _,
     primitives::{BlockHash, Bytes, Log},
     providers::Provider,
     rlp::{BufMut, Encodable},
     rpc::types::TransactionReceipt,
 };
-use alloy_consensus::{Receipt, ReceiptEnvelope, ReceiptWithBloom, TxType};
 use alloy_trie::{proof::ProofRetainer, root::adjust_index_for_rlp, HashBuilder, Nibbles};
 
 use crate::{ClientError, EthClient};
