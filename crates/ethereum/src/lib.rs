@@ -4,11 +4,29 @@ use alloy::{
     providers::{Provider, ProviderBuilder},
     rpc::types::TransactionReceipt,
     signers::local::PrivateKeySigner,
+    sol,
     transports::{RpcError, TransportErrorKind},
 };
-use nomad_types::{Escrow, Signal, TokenContract};
+use nomad_types::Signal;
 
 mod proof;
+
+sol! {
+    #[sol(rpc)]
+    contract TokenContract {
+        function balanceOf(address) public view returns (uint256);
+        function mint() external;
+        function transfer(address to, uint256 value) external returns (bool);
+        function approve(address spender, uint256 value) external returns (bool);
+    }
+
+    #[sol(rpc)]
+    contract Escrow {
+        function bond(uint256 _bondAmount) public;
+        function collect() public;
+        function is_bonded() public view returns (bool);
+    }
+}
 
 pub struct EthClient<P: Provider + Clone> {
     provider: P,

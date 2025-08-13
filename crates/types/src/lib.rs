@@ -1,7 +1,4 @@
-use alloy::{
-    primitives::{Address, U256},
-    sol,
-};
+use alloy::primitives::{Address, U256};
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, Hash)]
@@ -32,27 +29,4 @@ impl std::fmt::Display for Signal {
             self.transfer_amount, self.recipient, self.reward_amount, self.escrow_contract
         )
     }
-}
-
-sol! {
-    #[sol(rpc)]
-    contract TokenContract {
-        function balanceOf(address) public view returns (uint256);
-        function mint() external;
-        function transfer(address to, uint256 value) external returns (bool);
-        function approve(address spender, uint256 value) external returns (bool);
-    }
-
-    #[sol(rpc)]
-    contract Escrow {
-        function bond(uint256 _bondAmount) public;
-        function collect() public;
-        function is_bonded() public view returns (bool);
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum ProcessSignalStatus {
-    Processed,
-    Broadcast,
 }
