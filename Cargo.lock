@@ -4012,6 +4012,7 @@ dependencies = [
  "anyhow",
  "jsonrpsee",
  "nomad-types",
+ "serde",
  "tokio",
  "tracing",
 ]

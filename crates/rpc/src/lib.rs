@@ -1,7 +1,14 @@
 use jsonrpsee::{core::async_trait, proc_macros::rpc, server::Server};
-use nomad_types::Signal;
-use tokio::sync::mpsc;
+use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc::UnboundedSender;
 use tracing::{info, instrument};
+
+use nomad_types::Signal;
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct RpcConfig {
+    pub port: u16,
+}
 
 #[rpc(server, namespace = "mirage")]
 pub trait MirageRpc {
@@ -10,26 +17,26 @@ pub trait MirageRpc {
 }
 
 struct MirageServer {
-    signal_tx: mpsc::UnboundedSender<Signal>,
+    signal_tx: UnboundedSender<Signal>,
 }
 
 #[async_trait]
 impl MirageRpcServer for MirageServer {
     async fn signal(&self, message: Signal) -> String {
-        info!("Received RPC signal: {}", message);
-        let _ = self.signal_tx.send(message.clone());
-        format!("Signal acknowledged: {}", message)
+        info!("Received RPC signal: {message}");
+        self.signal_tx
+            .send(message.clone())
+            .expect("failed to send signal to gossip");
+        format!("Signal acknowledged: {message}")
     }
 }
 
 #[instrument(skip(signal_tx))]
 pub async fn spawn_rpc_server(
-    signal_tx: mpsc::UnboundedSender<Signal>,
-    rpc_port: Option<u16>,
+    config: RpcConfig,
+    signal_tx: UnboundedSender<Signal>,
 ) -> anyhow::Result<()> {
-    let server = Server::builder()
-        .build(("0.0.0.0", rpc_port.unwrap_or_default()))
-        .await?;
+    let server = Server::builder().build(("0.0.0.0", config.port)).await?;
     let server_addr = server.local_addr()?;
     let rpc_server = server.start(MirageServer { signal_tx }.into_rpc());
     println!("RPC server running on {}", server_addr);
