@@ -5,10 +5,6 @@ edition.workspace = true
 
 [dependencies]
 nomad-types = { path = "../types" }
-nomad-ethereum = { path = "../ethereum" }
 tokio.workspace = true
-tracing.workspace = true
-anyhow.workspace = true
-alloy.workspace = true
-futures.workspace = true
-serde.workspace = true
+dashmap = "6.1.0"
+rand = "0.9.2"

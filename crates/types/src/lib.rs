@@ -4,7 +4,7 @@ use alloy::{
 };
 use serde::{Deserialize, Serialize};
 
-#[derive(Deserialize, Serialize, Clone)]
+#[derive(Deserialize, Serialize, Clone, PartialEq, Eq, Hash)]
 pub struct Signal {
     pub escrow_contract: Address,
     pub token_contract: Address,
