@@ -46,6 +46,8 @@ async fn main() -> anyhow::Result<()> {
     let signal_pool = nomad_core::pool::SignalPool::default();
     let (signal_tx, signal_rx) = mpsc::unbounded_channel();
 
+    log_addresses().await;
+
     let _ = spawn_rpc_server(signal_tx, args.rpc_port).await;
     let _ = spawn_p2p(
         P2pConfig {
@@ -170,5 +172,17 @@ fn build_signers(args: &cli::Args) -> anyhow::Result<Vec<PrivateKeySigner>> {
         (None, None) => Ok(vec![]),
         // one present, one missing → treat as a configuration error
         _ => anyhow::bail!("Supply *both* --pk1 and --pk2 or neither"),
+    }
+}
+
+/// Print local and remote ip addresses
+async fn log_addresses() {
+    if let Ok(local_ip) = local_ip_address::local_ip() {
+        info!("Local Address: {local_ip}");
+    }
+    if let Ok(res) = reqwest::get("https://ifconfig.me").await {
+        if let Ok(remote_ip) = res.text().await {
+            info!("Remote Address: {remote_ip}");
+        }
     }
 }

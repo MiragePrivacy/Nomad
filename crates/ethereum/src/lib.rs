@@ -7,6 +7,7 @@ use alloy::{
     sol,
     transports::{RpcError, TransportErrorKind},
 };
+
 use nomad_types::Signal;
 
 mod proof;

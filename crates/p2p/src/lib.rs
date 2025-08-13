@@ -9,12 +9,12 @@ use libp2p::{
     swarm::{NetworkBehaviour, SwarmEvent},
     tcp, yamux, Multiaddr,
 };
-use local_ip_address::local_ip;
-use nomad_core::pool::SignalPool;
-use nomad_types::Signal;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedReceiver;
 use tracing::{info, warn};
+
+use nomad_core::pool::SignalPool;
+use nomad_types::Signal;
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct P2pConfig {
@@ -82,21 +82,6 @@ pub fn spawn_p2p(
             match event {
                 SwarmEvent::NewListenAddr { address, .. } => {
                     info!("Listening on {}", address);
-
-                    // Log local and global IP addresses for P2P server
-                    if let Some(port) = address.iter().find_map(|protocol| match protocol {
-                        libp2p::multiaddr::Protocol::Tcp(p) => Some(p),
-                        _ => None,
-                    }) {
-                        if let Ok(local_ip) = local_ip() {
-                            info!("P2P server local network access: {}:{}", local_ip, port);
-                        }
-                        if let Ok(res) = reqwest::get("https://ifconfig.me").await {
-                            if let Ok(ip) = res.text().await {
-                                info!("P2P Global Address: {ip}:{}", config.tcp);
-                            }
-                        }
-                    }
                 }
                 SwarmEvent::Behaviour(GossipBehaviorEvent::Gossipsub(
                     gossipsub::Event::Message {

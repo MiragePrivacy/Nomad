@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
 use dashmap::DashSet;
-use nomad_types::Signal;
 use rand::Rng;
 use tokio::sync::Mutex;
+
+use nomad_types::Signal;
 
 #[derive(Clone, Default)]
 pub struct SignalPool {
