@@ -13,6 +13,10 @@ pub struct SignalPool {
 }
 
 impl SignalPool {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
     /// Insert a signal into the pool, returning true if not duplicated
     pub async fn insert(&self, signal: Signal) -> bool {
         let signal = Arc::new(signal);

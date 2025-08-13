@@ -12,6 +12,7 @@ use tokio::sync::mpsc;
 use tracing::{info, instrument, warn};
 use tracing_subscriber::EnvFilter;
 
+use nomad_core::pool::*;
 use nomad_ethereum::*;
 use nomad_p2p::*;
 use nomad_rpc::*;
@@ -23,6 +24,7 @@ mod cli;
 #[tokio::main]
 #[instrument]
 async fn main() -> anyhow::Result<()> {
+    // Setup app and parse cli arguments
     dotenvy::dotenv().ok();
     let _ = tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
@@ -32,9 +34,19 @@ async fn main() -> anyhow::Result<()> {
         .with_line_number(false)
         .compact()
         .try_init();
-
     let args = cli::Args::parse();
 
+    // Log local and remote ip addresses
+    if let Ok(local_ip) = local_ip_address::local_ip() {
+        info!("Local Address: {local_ip}");
+    }
+    if let Ok(res) = reqwest::get("https://ifconfig.me").await {
+        if let Ok(remote_ip) = res.text().await {
+            info!("Remote Address: {remote_ip}");
+        }
+    }
+
+    // Build eth clients
     let signers = build_signers(&args)?;
     let eth_client = EthClient::new(
         ProviderBuilder::new()
@@ -44,12 +56,16 @@ async fn main() -> anyhow::Result<()> {
         signers,
     );
 
-    let signal_pool = nomad_core::pool::SignalPool::default();
+    // Setup background server tasks, shared signal pool
+    let signal_pool = SignalPool::new();
     let (signal_tx, signal_rx) = mpsc::unbounded_channel();
-
-    log_addresses().await;
-
-    let _ = spawn_rpc_server(signal_tx, args.rpc_port).await;
+    let _ = spawn_rpc_server(
+        RpcConfig {
+            port: args.rpc_port.unwrap_or(0),
+        },
+        signal_tx,
+    )
+    .await;
     let _ = spawn_p2p(
         P2pConfig {
             bootstrap: Vec::new(),
@@ -58,9 +74,12 @@ async fn main() -> anyhow::Result<()> {
         signal_rx,
         signal_pool.clone(),
     );
+
+    // Spawn a vm worker thread
     let vm_socket = NomadVm::new().spawn();
 
     loop {
+        // Get a random signal from the pool and process it
         let signal = signal_pool.sample().await;
         if let Err(e) = handle_signal(signal, &eth_client, &vm_socket).await {
             warn!("failed to handle signal: {e}");
@@ -68,7 +87,7 @@ async fn main() -> anyhow::Result<()> {
     }
 }
 
-/// Main logic for processing a signal sampled from the pool
+/// Process signals sampled from the pool
 async fn handle_signal<P: Provider + Clone>(
     signal: Signal,
     eth_client: &EthClient<P>,
@@ -185,17 +204,5 @@ fn build_signers(args: &cli::Args) -> anyhow::Result<Vec<PrivateKeySigner>> {
         (None, None) => Ok(vec![]),
         // one present, one missing → treat as a configuration error
         _ => anyhow::bail!("Supply *both* --pk1 and --pk2 or neither"),
-    }
-}
-
-/// Print local and remote ip addresses
-async fn log_addresses() {
-    if let Ok(local_ip) = local_ip_address::local_ip() {
-        info!("Local Address: {local_ip}");
-    }
-    if let Ok(res) = reqwest::get("https://ifconfig.me").await {
-        if let Ok(remote_ip) = res.text().await {
-            info!("Remote Address: {remote_ip}");
-        }
     }
 }
