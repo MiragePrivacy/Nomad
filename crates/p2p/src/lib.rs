@@ -16,10 +16,20 @@ use tracing::{info, warn};
 use nomad_core::SignalPool;
 use nomad_types::Signal;
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Clone, Debug)]
+#[serde(default)]
 pub struct P2pConfig {
     pub bootstrap: Vec<Multiaddr>,
     pub tcp: u16,
+}
+
+impl Default for P2pConfig {
+    fn default() -> Self {
+        Self {
+            bootstrap: Vec::new(),
+            tcp: 9000,
+        }
+    }
 }
 
 #[derive(NetworkBehaviour)]

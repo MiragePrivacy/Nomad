@@ -16,6 +16,7 @@ use nomad_types::*;
 use nomad_vm::*;
 
 mod cli;
+mod config;
 
 #[tokio::main]
 #[instrument]
@@ -30,7 +31,9 @@ async fn main() -> anyhow::Result<()> {
         .with_line_number(false)
         .compact()
         .try_init();
+
     let args = cli::Args::parse();
+    let config = config::Config::load(None).merge_args(&args);
 
     // Log local and remote ip addresses
     if let Ok(local_ip) = local_ip_address::local_ip() {
@@ -44,26 +47,13 @@ async fn main() -> anyhow::Result<()> {
 
     // Build eth clients
     let signers = build_signers(&args)?;
-    let eth_client = EthClient::new(EthConfig { rpc: args.http_rpc }, signers).await?;
+    let eth_client = EthClient::new(config.eth, signers).await?;
 
     // Setup background server tasks, shared signal pool
     let signal_pool = SignalPool::new();
     let (signal_tx, signal_rx) = mpsc::unbounded_channel();
-    let _ = spawn_rpc_server(
-        RpcConfig {
-            port: args.rpc_port.unwrap_or(0),
-        },
-        signal_tx,
-    )
-    .await;
-    let _ = spawn_p2p(
-        P2pConfig {
-            bootstrap: Vec::new(),
-            tcp: args.p2p_port.unwrap_or(0),
-        },
-        signal_rx,
-        signal_pool.clone(),
-    );
+    let _ = spawn_rpc_server(config.rpc, signal_tx).await;
+    let _ = spawn_p2p(config.p2p, signal_rx, signal_pool.clone());
 
     // Spawn a vm worker thread
     let vm_socket = NomadVm::new().spawn();

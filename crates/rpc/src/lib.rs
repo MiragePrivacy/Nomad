@@ -6,8 +6,15 @@ use tracing::{info, instrument};
 use nomad_types::Signal;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(default)]
 pub struct RpcConfig {
     pub port: u16,
+}
+
+impl Default for RpcConfig {
+    fn default() -> Self {
+        Self { port: 8000 }
+    }
 }
 
 #[rpc(server, namespace = "mirage")]

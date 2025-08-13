@@ -10,6 +10,7 @@ use alloy::{
     sol,
     transports::{RpcError, TransportErrorKind},
 };
+use serde::{Deserialize, Serialize};
 
 use nomad_types::Signal;
 
@@ -32,8 +33,17 @@ sol! {
     }
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct EthConfig {
     pub rpc: String,
+}
+
+impl Default for EthConfig {
+    fn default() -> Self {
+        Self {
+            rpc: "https://ethereum-rpc.publicnode.com".into(),
+        }
+    }
 }
 
 type BaseProvider = FillProvider<
