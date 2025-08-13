@@ -46,6 +46,8 @@ pub enum ClientError {
     Proof(#[from] proof::ProofError),
     #[error("Contract already bonded")]
     AlreadyBonded,
+    #[error("Invalid contract bytecode")]
+    InvalidBytecode,
 }
 
 impl<P: Provider + Clone> EthClient<P> {
@@ -59,6 +61,18 @@ impl<P: Provider + Clone> EthClient<P> {
             })
             .collect();
         Self { provider, accounts }
+    }
+
+    pub async fn validate_contract(
+        &self,
+        signal: Signal,
+        obfuscated: Vec<u8>,
+    ) -> Result<(), ClientError> {
+        let bytecode = self.provider.get_code_at(signal.escrow_contract).await?;
+        if bytecode != obfuscated {
+            return Err(ClientError::InvalidBytecode);
+        }
+        Ok(())
     }
 
     /// Select ideal accounts for EOA 1 and 2

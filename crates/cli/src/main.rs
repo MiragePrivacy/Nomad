@@ -87,7 +87,10 @@ async fn handle_signal<P: Provider + Clone>(
     // TODO:
     //   - get k1 from relayer
     //   - decrypt signal
-    //   - verify escrow contract by re-obfuscating and comparing results
+    //   - re-obfuscate contract for validation
+
+    // validate contract
+    // eth_client.validate_contract(signal, Vec::new());
 
     // select ideal accounts
     let [eoa_1, eoa_2] = eth_client.select_accounts(signal.clone()).await?;
