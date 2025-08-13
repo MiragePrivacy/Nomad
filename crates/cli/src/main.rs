@@ -12,7 +12,7 @@ use tokio::sync::mpsc;
 use tracing::{info, instrument, warn};
 use tracing_subscriber::EnvFilter;
 
-use nomad_core::pool::*;
+use nomad_core::*;
 use nomad_ethereum::*;
 use nomad_p2p::*;
 use nomad_rpc::*;

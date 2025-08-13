@@ -1,1 +1,3 @@
-pub mod pool;
+mod pool;
+
+pub use pool::*;
