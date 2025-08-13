@@ -46,7 +46,7 @@ pub async fn spawn_rpc_server(
     let server = Server::builder().build(("0.0.0.0", config.port)).await?;
     let server_addr = server.local_addr()?;
     let rpc_server = server.start(MirageServer { signal_tx }.into_rpc());
-    println!("RPC server running on {}", server_addr);
+    info!("RPC server running on {}", server_addr);
     tokio::spawn(rpc_server.stopped());
     Ok(())
 }
