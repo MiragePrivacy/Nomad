@@ -21,25 +21,38 @@ mod config;
 #[tokio::main]
 #[instrument]
 async fn main() -> anyhow::Result<()> {
-    // Setup app and parse cli arguments
+    // Parse cli arguments and app setup
     dotenvy::dotenv().ok();
+    let args = cli::Args::parse();
+
+    // Setup logging filters
+    let env_filter = EnvFilter::builder().parse_lossy(match std::env::var("RUST_LOG") {
+        // Environment override
+        Ok(filter) => filter,
+        // Default which is directed by the verbosity flag
+        Err(_) => match args.verbose {
+            0 => "info",
+            1 => "debug",
+            _ => "trace",
+        }
+        .to_string(),
+    });
     let _ = tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env())
-        .with_target(false)
+        .with_env_filter(env_filter)
+        .with_target(true)
         .with_thread_ids(false)
         .with_file(false)
         .with_line_number(false)
         .compact()
         .try_init();
 
-    let args = cli::Args::parse();
     let config = config::Config::load(None).merge_args(&args);
 
     // Log local and remote ip addresses
     if let Ok(local_ip) = local_ip_address::local_ip() {
         info!("Local Address: {local_ip}");
     }
-    if let Ok(res) = reqwest::get("https://ifconfig.me").await {
+    if let Ok(res) = reqwest::get("https://ifconfig.me/ip").await {
         if let Ok(remote_ip) = res.text().await {
             info!("Remote Address: {remote_ip}");
         }

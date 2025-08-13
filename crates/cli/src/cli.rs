@@ -1,4 +1,4 @@
-use clap::Parser;
+use clap::{ArgAction, Parser};
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -12,6 +12,10 @@ pub(crate) struct Args {
     /// Use the faucet functionality on the given token contract. For testing mode.
     #[arg(long)]
     pub faucet: Option<String>,
+
+    /// Increases the level of verbosity (the max level is -vvv).
+    #[arg(short, global = true, action = ArgAction::Count)]
+    pub verbose: u8,
 
     /* Config overrides */
     /// Port for the RPC server
@@ -27,4 +31,3 @@ pub(crate) struct Args {
     #[arg(long)]
     pub http_rpc: Option<String>,
 }
-
