@@ -372,7 +372,7 @@ if [ ${#SENDER_KEYS[@]} -gt 0 ]; then
 fi
 
 cargo build --release
-BIN=./target/release/nomad
+BIN="./target/release/nomad run"
 
 # ------------------------------------------------------------
 # 3. Launch nodes sequentially with random peer connections
@@ -392,7 +392,7 @@ NODE1_CMD="$BIN --http-rpc $HTTP_RPC --rpc-port $RPC_PORT_1 --p2p-port $P2P_PORT
 if [ 1 -le "$WRITE_NODES" ]; then
   key_idx1=0
   key_idx2=1
-  NODE1_CMD="$NODE1_CMD --pk1 ${KEYS[$key_idx1]} --pk2 ${KEYS[$key_idx2]}"
+  NODE1_CMD="$NODE1_CMD --pk ${KEYS[$key_idx1]} --pk ${KEYS[$key_idx2]}"
   echo "[runner] Node 1: RPC port $RPC_PORT_1, P2P port $P2P_PORT_1 (write node with keys)"
 else
   echo "[runner] Node 1: RPC port $RPC_PORT_1, P2P port $P2P_PORT_1 (read node, no keys)"
@@ -437,7 +437,7 @@ for ((i=2; i<=NODE_COUNT; i++)); do
   if [ $i -le "$WRITE_NODES" ]; then
     key_idx1=$((2 * (i - 1)))
     key_idx2=$((2 * (i - 1) + 1))
-    NODE_CMD="$NODE_CMD --pk1 ${KEYS[$key_idx1]} --pk2 ${KEYS[$key_idx2]}"
+    NODE_CMD="$NODE_CMD --pk ${KEYS[$key_idx1]} --pk ${KEYS[$key_idx2]}"
     echo "[runner] Node $i: RPC port $RPC_PORT, P2P port $P2P_PORT, connecting to Node $peer_idx (write node with keys)"
   else
     echo "[runner] Node $i: RPC port $RPC_PORT, P2P port $P2P_PORT, connecting to Node $peer_idx (read node, no keys)"
