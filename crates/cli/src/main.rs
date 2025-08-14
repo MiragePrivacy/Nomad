@@ -48,6 +48,9 @@ async fn main() -> anyhow::Result<()> {
     // Load configuration and apply overrides
     let config = config::Config::load(args.config.as_ref()).with_overrides(&args);
 
+    // If we dont have two keys, don't process any signals
+    let read_only = args.pk1.is_some() && args.pk2.is_some();
+
     // Log local and remote ip addresses
     if let Ok(local_ip) = local_ip_address::local_ip() {
         info!("Local Address: {local_ip}");
@@ -66,7 +69,7 @@ async fn main() -> anyhow::Result<()> {
     let signal_pool = SignalPool::new();
     let (signal_tx, signal_rx) = mpsc::unbounded_channel();
     let _ = spawn_rpc_server(config.rpc, signal_tx).await;
-    let _ = spawn_p2p(config.p2p, signal_rx, signal_pool.clone());
+    let _ = spawn_p2p(config.p2p, read_only, signal_rx, signal_pool.clone());
 
     // Spawn a vm worker thread
     let vm_socket = NomadVm::new().spawn();

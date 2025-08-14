@@ -33,12 +33,13 @@ impl Default for P2pConfig {
 }
 
 #[derive(NetworkBehaviour)]
-pub struct GossipBehavior {
+struct GossipBehavior {
     pub gossipsub: gossipsub::Behaviour,
 }
 
 pub fn spawn_p2p(
     config: P2pConfig,
+    read_only: bool,
     mut rx: UnboundedReceiver<Signal>,
     signal_pool: SignalPool,
 ) -> anyhow::Result<()> {
@@ -101,7 +102,7 @@ pub fn spawn_p2p(
                         propagation_source,
                         ..
                     },
-                )) => match message.topic {
+                )) if !read_only => match message.topic {
                     t if t == signal_topic.hash() => {
                         match serde_json::from_slice::<Signal>(&message.data) {
                             Ok(signal) => {
