@@ -7,9 +7,20 @@ version = "0.1.0"
 edition = "2021"
 
 [workspace.dependencies]
-alloy = { version = "1.0.23", features = ["full"] }
 eyre = "0.6"
 futures = "0.3"
 serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1.47", features = ["full"] }
 tracing = "0.1"
+
+[workspace.dependencies.alloy]
+version = "1.0.23"
+default-features = false
+features = [
+  "serde",
+  "contract",
+  "signer-local",
+  "providers",
+  "rpc-types",
+  "rlp"
+]
