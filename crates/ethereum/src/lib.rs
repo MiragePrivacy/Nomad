@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 use alloy::{
     network::EthereumWallet,
     primitives::{Address, U256},
@@ -14,9 +16,9 @@ use alloy::{
     transports::{RpcError, TransportErrorKind},
 };
 use serde::{Deserialize, Serialize};
+use tracing::debug;
 
 use nomad_types::Signal;
-use tracing::debug;
 
 mod proof;
 
@@ -37,9 +39,21 @@ sol! {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct EthConfig {
     pub rpc: String,
+}
+
+impl Debug for EthConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Hide potentially sensitive query parameters
+        let mut split = self.rpc.split('?');
+        let mut trimmed = split.next().unwrap().to_string();
+        if split.next().is_some() {
+            trimmed += "?==redacted==";
+        }
+        f.debug_struct("EthConfig").field("rpc", &trimmed).finish()
+    }
 }
 
 impl Default for EthConfig {
