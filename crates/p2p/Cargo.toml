@@ -5,7 +5,7 @@ edition.workspace = true
 
 [dependencies]
 nomad-types = { path = "../types" }
-nomad-core = { path = "../core" }
+nomad-pool = { path = "../pool" }
 
 tokio.workspace = true
 tracing.workspace = true

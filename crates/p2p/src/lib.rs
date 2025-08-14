@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedReceiver;
 use tracing::{debug, info, warn};
 
-use nomad_core::SignalPool;
+use nomad_pool::SignalPool;
 use nomad_types::Signal;
 
 #[derive(Deserialize, Serialize, Clone, Debug)]

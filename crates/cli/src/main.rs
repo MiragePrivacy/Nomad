@@ -8,9 +8,9 @@ use tokio::sync::mpsc;
 use tracing::{info, instrument, warn};
 use tracing_subscriber::EnvFilter;
 
-use nomad_core::*;
 use nomad_ethereum::*;
 use nomad_p2p::*;
+use nomad_pool::*;
 use nomad_rpc::*;
 use nomad_types::*;
 use nomad_vm::*;
@@ -66,7 +66,7 @@ async fn main() -> anyhow::Result<()> {
     let eth_client = EthClient::new(config.eth, signers).await?;
 
     // Setup background server tasks, shared signal pool
-    let signal_pool = SignalPool::new();
+    let signal_pool = SignalPool::new(65535);
     let (signal_tx, signal_rx) = mpsc::unbounded_channel();
     let _ = spawn_rpc_server(config.rpc, signal_tx).await;
     let _ = spawn_p2p(config.p2p, read_only, signal_rx, signal_pool.clone());
