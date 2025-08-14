@@ -1,7 +1,5 @@
 [workspace]
-members = [
-    "crates/*"
-]
+members = [ "crates/*" ]
 resolver = "2"
 
 [workspace.package]
@@ -15,4 +13,3 @@ futures = "0.3"
 serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1.47", features = ["full"] }
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }

@@ -8,19 +8,18 @@ name = "nomad"
 path = "src/main.rs"
 
 [dependencies]
-nomad-types = { path = "../types" }
-nomad-pool = { path = "../pool" }
-nomad-vm = { path = "../vm" }
-nomad-rpc = { path = "../rpc" }
-nomad-p2p = { path = "../p2p" }
 nomad-ethereum = { path = "../ethereum" }
+nomad-p2p = { path = "../p2p" }
+nomad-pool = { path = "../pool" }
+nomad-rpc = { path = "../rpc" }
+nomad-types = { path = "../types" }
+nomad-vm = { path = "../vm" }
 
 alloy.workspace = true
 futures.workspace = true
 serde.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-tracing-subscriber.workspace = true
 
 color-eyre = "0.6.5"
 clap = { version = "4.5.37", features = ["derive", "env"] }
@@ -29,6 +28,7 @@ local-ip-address = "0.6.5"
 reqwest = { version = "0.12", features = ["json"] }
 resolve-path = "0.1.0"
 toml = "0.9.5"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 workspace-filter = "0.1.0"
 
 [build-dependencies]
