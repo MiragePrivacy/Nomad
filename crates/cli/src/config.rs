@@ -21,8 +21,8 @@ impl Config {
     const DEFAULT_PATH: &str = "~/.config/nomad/config.toml";
 
     /// Load the config, filling in missing values with defaults, and writing to disk after.
-    pub fn load(path: Option<PathBuf>) -> Self {
-        let path = path.unwrap_or(Self::DEFAULT_PATH.into());
+    pub fn load(path: Option<impl Into<PathBuf>>) -> Self {
+        let path = path.map(|v| v.into()).unwrap_or(Self::DEFAULT_PATH.into());
         let path = path.resolve().to_path_buf();
 
         // Read config or get the default
@@ -49,7 +49,7 @@ impl Config {
     }
 
     /// Override config items with cli args if provided
-    pub fn merge_args(mut self, args: &Args) -> Self {
+    pub fn with_overrides(mut self, args: &Args) -> Self {
         if let Some(rpc) = args.http_rpc.clone() {
             self.eth.rpc = rpc;
         }

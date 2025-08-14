@@ -45,7 +45,8 @@ async fn main() -> anyhow::Result<()> {
         .compact()
         .try_init();
 
-    let config = config::Config::load(None).merge_args(&args);
+    // Load configuration and apply overrides
+    let config = config::Config::load(args.config.as_ref()).with_overrides(&args);
 
     // Log local and remote ip addresses
     if let Ok(local_ip) = local_ip_address::local_ip() {

@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use clap::{ArgAction, Parser};
 
 #[derive(Parser)]
@@ -13,6 +15,9 @@ pub(crate) struct Args {
     #[arg(long)]
     pub faucet: Option<String>,
 
+    /// Path to config file
+    #[arg(short, long)]
+    pub config: Option<PathBuf>,
     /// Increases the level of verbosity (the max level is -vvv).
     #[arg(short, global = true, action = ArgAction::Count)]
     pub verbose: u8,
