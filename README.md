@@ -4,7 +4,8 @@ Nomad is the node software used by Mirage to participate in the network, validat
 
 ## Signal Processing
 
-Signals are sampled and processed one at a time from an unordered pool by the node. For each signal:
+Signals are sampled and processed one at a time from an local unordered pool by the node.
+For each signal:
 
 1. Execute the signal's puzzle program for k2
 2. Contact relayer with keccak(k2) to get k1
@@ -24,7 +25,7 @@ Nomad/
 │   ├── cli/        Command-line interface and main binary
 │   ├── ethereum/   Ethereum integration and proof generation
 │   ├── p2p/        Peer-to-peer networking
-│   ├── pool/       Shared signal pool
+│   ├── pool/       Signal pool implementation
 │   ├── rpc/        RPC server implementation
 │   ├── types/      Shared type definitions
 │   └── vm/         Virtual machine for puzzle execution
