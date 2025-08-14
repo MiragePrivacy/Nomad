@@ -1,4 +1,4 @@
-name: PR size gate
+name: PR Size Gate
 
 on:
   pull_request:

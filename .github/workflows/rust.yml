@@ -1,8 +1,12 @@
-name: Rust
+name: Rust Checks
 
 on:
   push:
     branches: [ "main" ]
+    paths:
+      - '.github/workflows/rust.yml'
+      - 'crates/**/*'
+      - 'Cargo.*'
   pull_request:
     branches: [ "main" ]
 
@@ -10,13 +14,26 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - run: cargo fmt --check
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - run: cargo clippy -- -Dwarnings
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - run: cargo test --verbose
+
   build:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    - name: Check
-      run: cargo check
-    - name: Clippy
-      run: cargo clippy -- -Dwarnings
-    - name: Run tests
-      run: cargo test --verbose
+    - run: cargo build --release
