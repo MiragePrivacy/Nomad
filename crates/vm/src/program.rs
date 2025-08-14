@@ -1,12 +1,55 @@
-use crate::{Instruction, VmError};
-use std::io::{Result as IoResult, Write};
+use std::{
+    io::{Result as IoResult, Write},
+    ops::Deref,
+};
 
-pub struct Program(pub(crate) Vec<Instruction>);
+use crate::{Instruction, VmError};
+
+/// Construct an unvalidated program from raw mnemonics
+///
+/// # Safety
+///
+/// Executing a manually assembled program may result in undefined behavior
+///
+/// # Example
+///
+/// ```ignore
+/// nomad_vm::program![
+///     // setup two registers
+///     Set 1, 400;
+///     Set 2, 200;
+///     // reg0 = reg1 - reg2
+///     Sub 0, 1, 2;
+///     // store 32-bit result in memory
+///     Store 0, 500
+/// ]
+/// ```
+#[macro_export]
+macro_rules! program {
+    [$( $op:ident $($arg:expr),* ; )*] => {
+        $crate::Program::from_raw(vec![
+            $( $crate::Instruction::$op( $($arg),* ) ),*
+        ])
+    };
+}
+
+pub struct Program(Vec<Instruction>);
+
+impl Deref for Program {
+    type Target = [Instruction];
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 impl Program {
-    /// Construct and unvalidated program from instructions
-    pub fn from_raw(instructions: Vec<Instruction>) -> Self {
-        Self(instructions)
+    /// Construct an unvalidated program from instructions.
+    ///
+    /// # Safety
+    ///
+    /// Executing a manually assembled program may result in undefined behavior
+    pub fn from_raw(ops: Vec<Instruction>) -> Self {
+        Self(ops)
     }
 
     /// Parse and validate program bytecode into a list of instructions.
@@ -28,22 +71,4 @@ impl Program {
         }
         Ok(())
     }
-}
-
-#[macro_export]
-macro_rules! program {
-    [$( $op:tt $($arg:expr),* ;)*] => {
-        $crate::Program::from_raw(vec![
-            $( $crate::Instruction::$op( $($arg),* ) ),*
-        ])
-    };
-}
-
-#[test]
-fn test_program() {
-    let program = program![
-        Set 0, 400;
-        Set 1, 200;
-        Sub 2, 0, 1;
-    ];
 }

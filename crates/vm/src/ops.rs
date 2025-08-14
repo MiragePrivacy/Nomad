@@ -57,7 +57,7 @@ impl TryFrom<u8> for Opcode {
 ///
 /// Each instruction operates on 8 registers (0-7) and 1GiB of memory space.
 /// Instructions use big-endian encoding for multi-byte values.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Instruction {
     /// Assign a constant value to a register.
     ///
@@ -180,7 +180,7 @@ pub enum Instruction {
     /// ```ignore
     /// Halt // Stop execution
     /// ```
-    Halt,
+    Halt(),
 }
 
 fn validate_reg(reg: u8) -> Result<u8, VmError> {
@@ -203,7 +203,7 @@ impl Instruction {
             Instruction::Jmp { .. } => 5,
             Instruction::JmpEq { .. } => 7,
             Instruction::JmpNe { .. } => 7,
-            Instruction::Halt => 1,
+            Instruction::Halt() => 1,
         }
     }
 
@@ -213,10 +213,9 @@ impl Instruction {
         if bytes.is_empty() {
             return Err(VmError::InvalidProgram);
         }
-
         let opcode = Opcode::try_from(bytes[0])?;
-        let required_size = opcode.size();
 
+        let required_size = opcode.size();
         if bytes.len() < required_size {
             return Err(VmError::InvalidProgram);
         }
@@ -262,7 +261,7 @@ impl Instruction {
                 validate_reg(bytes[2])?,
                 u32::from_be_bytes([bytes[3], bytes[4], bytes[5], bytes[6]]),
             ),
-            Opcode::Halt => Instruction::Halt,
+            Opcode::Halt => Instruction::Halt(),
         };
 
         Ok((instruction, required_size))
@@ -326,7 +325,7 @@ impl Instruction {
                 buf[3..7].copy_from_slice(&target.to_be_bytes());
                 writer.write_all(&buf)?;
             }
-            Instruction::Halt => {
+            Instruction::Halt() => {
                 writer.write_all(&[Opcode::Halt as u8])?;
             }
         }

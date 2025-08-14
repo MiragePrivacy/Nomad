@@ -2,11 +2,13 @@ use affair::{DedicatedThread, Executor, Socket, Worker};
 use thiserror::Error;
 use tracing::{instrument, trace, Span};
 
-pub use crate::instructions::*;
+pub use crate::ops::*;
 pub use crate::program::*;
 
-mod instructions;
+mod ops;
 mod program;
+#[cfg(test)]
+mod tests;
 
 /// Fixed memory size available to the VM
 pub const MEMORY_SIZE: usize = 1024 * 1024 * 1024;
@@ -36,8 +38,8 @@ pub enum VmError {
 ///
 /// - 1 GiB memory space
 /// - 8x 32-bit registers
-/// - Max cycle count of 10k instructions
-/// - Registers are concatinated for 256-bit program output
+/// - Configurable max cycle count
+/// - 256-bit program output concatinated from registers
 ///
 /// ## Running as a worker
 ///
@@ -79,28 +81,27 @@ impl NomadVm {
 
     /// Parse, validate, and execute raw bytecode, returning the result from the concatinated registers
     pub fn execute(&mut self, bytecode: Vec<u8>) -> Result<[u8; 32], VmError> {
-        self.execute_program(Program::from_bytes(&bytecode)?)
+        let program = Program::from_bytes(&bytecode)?;
+        self.execute_program(program)
     }
 
     /// Executes a program, resets, and returns the result from the concatinated registers.
     fn execute_program(&mut self, program: Program) -> Result<[u8; 32], VmError> {
-        let instructions = program.0;
-
         // Execute instructions
         let mut cycles = 0;
-        let mut should_continue = true;
-        while should_continue && self.pc < instructions.len() && cycles < self.max_cycles {
-            let instruction = &instructions[self.pc];
-            should_continue = self.execute_instruction(instruction, instructions.len())?;
+        while let Some(instruction) = program.get(self.pc) {
+            self.execute_instruction(instruction, program.len())?;
             cycles += 1;
+            if cycles > self.max_cycles || instruction == &Instruction::Halt() {
+                break;
+            }
         }
 
         // Compute result from register values
         let mut result = [0u8; 32];
-        for (i, &val) in self.registers.iter().enumerate() {
-            let bytes = val.to_be_bytes();
+        for (i, val) in self.registers.iter().take(8).enumerate() {
             let offset = i * 4;
-            result[offset..offset + 3].copy_from_slice(&bytes);
+            result[offset..offset + 4].copy_from_slice(&val.to_be_bytes());
         }
 
         // Reset the VM state
@@ -116,7 +117,7 @@ impl NomadVm {
         &mut self,
         instruction: &Instruction,
         instructions_len: usize,
-    ) -> Result<bool, VmError> {
+    ) -> Result<(), VmError> {
         match instruction {
             Instruction::Set(reg, value) => {
                 self.registers[*reg as usize] = *value;
@@ -194,10 +195,8 @@ impl NomadVm {
                     self.pc += 1;
                 }
             }
-            Instruction::Halt => {
-                return Ok(false);
-            }
+            Instruction::Halt() => {}
         }
-        Ok(self.pc < instructions_len)
+        Ok(())
     }
 }
