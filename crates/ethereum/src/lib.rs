@@ -2,7 +2,10 @@ use alloy::{
     network::EthereumWallet,
     primitives::{Address, U256},
     providers::{
-        fillers::{BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller},
+        fillers::{
+            BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller,
+            WalletFiller,
+        },
         Identity, Provider, ProviderBuilder, RootProvider,
     },
     rpc::types::TransactionReceipt,
@@ -49,15 +52,18 @@ impl Default for EthConfig {
 
 type BaseProvider = FillProvider<
     JoinFill<
-        Identity,
-        JoinFill<GasFiller, JoinFill<BlobGasFiller, JoinFill<NonceFiller, ChainIdFiller>>>,
+        JoinFill<
+            Identity,
+            JoinFill<GasFiller, JoinFill<BlobGasFiller, JoinFill<NonceFiller, ChainIdFiller>>>,
+        >,
+        WalletFiller<EthereumWallet>,
     >,
     RootProvider,
 >;
 
 pub struct EthClient {
     provider: BaseProvider,
-    accounts: Vec<(EthereumWallet, Address)>,
+    accounts: Vec<Address>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -74,6 +80,8 @@ pub enum ClientError {
     AlreadyBonded,
     #[error("Invalid contract bytecode")]
     InvalidBytecode,
+    #[error("Read-only mode, no signers available")]
+    ReadOnly,
 }
 
 impl EthClient {
@@ -82,15 +90,20 @@ impl EthClient {
         accounts: Vec<PrivateKeySigner>,
     ) -> Result<Self, ClientError> {
         debug!(?config);
+
+        let mut wallet = EthereumWallet::default();
         let accounts = accounts
             .into_iter()
             .map(|sk| {
                 let address = sk.address();
-                let wallet = EthereumWallet::new(sk);
-                (wallet, address)
+                wallet.register_signer(sk);
+                address
             })
             .collect();
-        let provider = ProviderBuilder::new().connect(&config.rpc).await?;
+        let provider = ProviderBuilder::new()
+            .wallet(wallet)
+            .connect(&config.rpc)
+            .await?;
         Ok(Self { provider, accounts })
     }
 
@@ -119,6 +132,10 @@ impl EthClient {
 
     /// Select ideal accounts for EOA 1 and 2
     pub async fn select_accounts(&self, _signal: Signal) -> Result<[usize; 2], ClientError> {
+        if self.accounts.is_empty() {
+            return Err(ClientError::ReadOnly);
+        }
+
         // TODO:
         //   - Get token balances for each account
         //   - EOA1 needs at least bond amount, EOA2 needs at least transfer amount
@@ -133,16 +150,14 @@ impl EthClient {
         eoa_1: usize,
         signal: Signal,
     ) -> Result<(TransactionReceipt, TransactionReceipt), ClientError> {
-        let provider = ProviderBuilder::new()
-            .wallet(&self.accounts[eoa_1].0)
-            .connect_provider(&self.provider);
-        let escrow = Escrow::new(signal.escrow_contract, &provider);
+        let escrow = Escrow::new(signal.escrow_contract, &self.provider);
 
-        // Double check escrow is not bonded yet
+        // Double check escrow contract is not bonded yet
         if escrow.is_bonded().call().await? {
             return Err(ClientError::AlreadyBonded);
         }
 
+        // Compute minimum bond amount
         let bond_amount = signal
             .reward_amount
             .checked_mul(U256::from(52))
@@ -150,16 +165,23 @@ impl EthClient {
             .checked_div(U256::from(100))
             .unwrap();
 
-        // Approve bond amount
-        let approve = TokenContract::new(signal.token_contract, &provider)
+        // Approve bond amount for escrow contract, on the token contract
+        let approve = TokenContract::new(signal.token_contract, &self.provider)
             .approve(signal.escrow_contract, bond_amount)
+            .from(self.accounts[eoa_1])
             .send()
             .await?
             .get_receipt()
             .await?;
 
-        // Send bond call
-        let bond = escrow.bond(bond_amount).send().await?.get_receipt().await?;
+        // Send bond call to escrow contract
+        let bond = escrow
+            .bond(bond_amount)
+            .from(self.accounts[eoa_1])
+            .send()
+            .await?
+            .get_receipt()
+            .await?;
 
         // TODO: revert approval if bond failed for any reason
 
@@ -172,12 +194,9 @@ impl EthClient {
         eoa_2: usize,
         signal: Signal,
     ) -> Result<(TransactionReceipt, proof::ProofBlob), ClientError> {
-        let provider = ProviderBuilder::new()
-            .wallet(&self.accounts[eoa_2].0)
-            .connect_provider(&self.provider);
-
-        let receipt = TokenContract::new(signal.token_contract, provider)
+        let receipt = TokenContract::new(signal.token_contract, &self.provider)
             .transfer(signal.recipient, signal.transfer_amount)
+            .from(self.accounts[eoa_2])
             .send()
             .await?
             .get_receipt()
@@ -201,13 +220,10 @@ impl EthClient {
         signal: Signal,
         _proof: proof::ProofBlob,
     ) -> Result<TransactionReceipt, ClientError> {
-        let provider = ProviderBuilder::new()
-            .wallet(&self.accounts[eoa_1].0)
-            .connect_provider(&self.provider);
-
         // TODO: actually send proof
-        let receipt = Escrow::new(signal.escrow_contract, provider)
+        let receipt = Escrow::new(signal.escrow_contract, &self.provider)
             .collect()
+            .from(self.accounts[eoa_1])
             .send()
             .await?
             .get_receipt()
