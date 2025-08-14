@@ -42,7 +42,7 @@ impl MirageRpcServer for MirageServer {
 pub async fn spawn_rpc_server(
     config: RpcConfig,
     signal_tx: UnboundedSender<Signal>,
-) -> anyhow::Result<()> {
+) -> eyre::Result<()> {
     debug!(?config);
     let server = Server::builder().build(("0.0.0.0", config.port)).await?;
     let server_addr = server.local_addr()?;

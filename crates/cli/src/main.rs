@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use alloy::{primitives::Address, providers::Provider, signers::local::PrivateKeySigner};
-use anyhow::{anyhow, Context};
 use chrono::Utc;
 use clap::Parser;
+use color_eyre::eyre::{bail, eyre, Context};
 use tokio::sync::mpsc;
 use tracing::{info, instrument, warn};
 use tracing_subscriber::EnvFilter;
@@ -20,7 +20,9 @@ mod config;
 
 #[tokio::main]
 #[instrument]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> color_eyre::Result<()> {
+    color_eyre::install()?;
+
     // Parse cli arguments and app setup
     let args = cli::Args::parse();
 
@@ -88,7 +90,7 @@ async fn handle_signal(
     signal: Signal,
     eth_client: &EthClient,
     vm_socket: &VmSocket,
-) -> anyhow::Result<()> {
+) -> color_eyre::Result<()> {
     let start_time = Utc::now().to_rfc3339();
 
     // TODO: Include the puzzle bytes in the signal payload
@@ -97,7 +99,7 @@ async fn handle_signal(
     let _k2 = vm_socket
         .run(puzzle)
         .await
-        .map_err(|_| anyhow!("failed to execute puzzle"))?;
+        .map_err(|_| eyre!("failed to execute puzzle"))?;
 
     // TODO:
     //   - get k1 from relayer
@@ -160,7 +162,7 @@ pub async fn call_faucet<P: Provider>(
     provider_with_wallet: Arc<P>,
     signer1: &PrivateKeySigner,
     signer2: &PrivateKeySigner,
-) -> anyhow::Result<()> {
+) -> color_eyre::Result<()> {
     info!("Minting tokens from faucet...");
     let token = TokenContract::new(token_addr, &provider_with_wallet);
 
@@ -183,7 +185,7 @@ pub async fn call_faucet<P: Provider>(
     Ok(())
 }
 
-fn build_signers(args: &cli::Args) -> anyhow::Result<Vec<PrivateKeySigner>> {
+fn build_signers(args: &cli::Args) -> color_eyre::Result<Vec<PrivateKeySigner>> {
     match (&args.pk1, &args.pk2) {
         // both present → parse, fail fast if either is malformed
         (Some(pk1), Some(pk2)) => {
@@ -199,6 +201,6 @@ fn build_signers(args: &cli::Args) -> anyhow::Result<Vec<PrivateKeySigner>> {
         // neither present → run in read-only mode
         (None, None) => Ok(vec![]),
         // one present, one missing → treat as a configuration error
-        _ => anyhow::bail!("Supply *both* --pk1 and --pk2 or neither"),
+        _ => bail!("Supply *both* --pk1 and --pk2 or neither"),
     }
 }

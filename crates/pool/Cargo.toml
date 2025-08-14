@@ -6,5 +6,5 @@ edition.workspace = true
 [dependencies]
 nomad-types = { path = "../types" }
 tokio.workspace = true
-scc = "2.3.4"
 rand = "0.9.2"
+scc = "2.3.4"

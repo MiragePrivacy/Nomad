@@ -42,7 +42,7 @@ pub fn spawn_p2p(
     read_only: bool,
     mut rx: UnboundedReceiver<Signal>,
     signal_pool: SignalPool,
-) -> anyhow::Result<()> {
+) -> eyre::Result<()> {
     debug!(?config);
 
     // Setup the swarm

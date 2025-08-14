@@ -7,11 +7,11 @@ edition.workspace = true
 nomad-types = { path = "../types" }
 nomad-pool = { path = "../pool" }
 
+eyre.workspace = true
+futures.workspace = true
+serde.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-anyhow.workspace = true
-serde.workspace = true
-futures.workspace = true
 
 libp2p = { version = "0.56", features = [
     "noise",

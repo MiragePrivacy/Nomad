@@ -4,5 +4,5 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-serde.workspace = true
 alloy.workspace = true
+serde.workspace = true
