@@ -13,10 +13,8 @@ pub struct FaucetArgs {
 impl FaucetArgs {
     /// Faucet tokens into each ethereum account
     pub async fn execute(self, config: Config, signers: Vec<PrivateKeySigner>) -> Result<()> {
-        let _eth_client = EthClient::new(config.eth, signers).await?;
-        // TODO: impl
-
+        let eth_client = EthClient::new(config.eth, signers).await?;
+        eth_client.faucet(self.contract).await?;
         Ok(())
     }
 }
-

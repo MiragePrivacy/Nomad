@@ -107,6 +107,25 @@ impl EthClient {
         Ok(Self { provider, accounts })
     }
 
+    /// Faucet tokens from a given contract into each ethereum account
+    pub async fn faucet(&self, contract: Address) -> Result<(), ClientError> {
+        let token = TokenContract::new(contract, &self.provider);
+
+        // Execute mint transactions and add their futures to the set
+        let mut futs = Vec::new();
+        for account in self.accounts.clone() {
+            let res = token.mint().from(account).send().await?;
+            futs.push(res.watch());
+        }
+
+        // Wait for all mint transactions to be verified
+        for fut in futs {
+            fut.await?;
+        }
+
+        Ok(())
+    }
+
     /// Validate the escrow contract for a given signal. Checks:
     /// - bytecode on-chain should match expected obfuscation output
     /// - escrow contract is not bonded yet
