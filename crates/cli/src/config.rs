@@ -14,10 +14,25 @@ use nomad_rpc::RpcConfig;
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 #[serde(default)]
 pub struct Config {
-    pub eth: EthConfig,
-    pub rpc: RpcConfig,
     pub p2p: P2pConfig,
+    pub rpc: RpcConfig,
+    pub vm: VmConfig,
+    pub eth: EthConfig,
     pub otlp: OtlpConfig,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(default)]
+pub struct VmConfig {
+    pub max_cycles: usize,
+}
+
+impl Default for VmConfig {
+    fn default() -> Self {
+        Self {
+            max_cycles: 1024 * 1024,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

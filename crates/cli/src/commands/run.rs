@@ -74,7 +74,7 @@ impl RunArgs {
         let eth_client = EthClient::new(config.eth, signers).await?;
 
         // Spawn a vm worker thread
-        let vm_socket = NomadVm::new().spawn();
+        let vm_socket = NomadVm::new(config.vm.max_cycles).spawn();
 
         // Setup metrics
         let meter = meter_provider().meter(env!("CARGO_BIN_NAME"));
