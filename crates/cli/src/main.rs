@@ -3,24 +3,24 @@ use std::sync::Arc;
 use alloy::{primitives::Address, providers::Provider, signers::local::PrivateKeySigner};
 use chrono::Utc;
 use clap::Parser;
-use color_eyre::eyre::{bail, eyre, Context};
+use color_eyre::eyre::{eyre, Result};
 use tokio::sync::mpsc;
 use tracing::{info, instrument, warn};
 use tracing_subscriber::EnvFilter;
 
-use nomad_ethereum::*;
-use nomad_p2p::*;
-use nomad_pool::*;
-use nomad_rpc::*;
-use nomad_types::*;
-use nomad_vm::*;
+use nomad_ethereum::{EthClient, TokenContract};
+use nomad_p2p::spawn_p2p;
+use nomad_pool::SignalPool;
+use nomad_rpc::spawn_rpc_server;
+use nomad_types::{ReceiptFormat, Signal};
+use nomad_vm::{NomadVm, VmSocket};
 
 mod cli;
 mod config;
 
 #[tokio::main]
 #[instrument]
-async fn main() -> color_eyre::Result<()> {
+async fn main() -> Result<()> {
     color_eyre::install()?;
 
     // Parse cli arguments and app setup
@@ -48,10 +48,8 @@ async fn main() -> color_eyre::Result<()> {
         .try_init();
 
     // Load configuration and apply overrides
-    let config = config::Config::load(args.config.as_ref()).with_overrides(&args);
-
-    // If we dont have two keys, don't process any signals
-    let read_only = args.pk1.is_some() && args.pk2.is_some();
+    let config = args.load_config()?;
+    let signers = args.build_signers()?;
 
     // Log local and remote ip addresses
     if let Ok(local_ip) = local_ip_address::local_ip() {
@@ -63,15 +61,17 @@ async fn main() -> color_eyre::Result<()> {
         }
     }
 
-    // Build eth clients
-    let signers = build_signers(&args)?;
-    let eth_client = EthClient::new(config.eth, signers).await?;
-
     // Setup background server tasks, shared signal pool
     let signal_pool = SignalPool::new(65535);
     let (signal_tx, signal_rx) = mpsc::unbounded_channel();
     let _ = spawn_rpc_server(config.rpc, signal_tx).await;
+
+    // If we dont have two keys, don't process any signals
+    let read_only = signers.is_empty();
     let _ = spawn_p2p(config.p2p, read_only, signal_rx, signal_pool.clone());
+
+    // Build eth clients
+    let eth_client = EthClient::new(config.eth, signers).await?;
 
     // Spawn a vm worker thread
     let vm_socket = NomadVm::new().spawn();
@@ -86,11 +86,7 @@ async fn main() -> color_eyre::Result<()> {
 }
 
 /// Process signals sampled from the pool
-async fn handle_signal(
-    signal: Signal,
-    eth_client: &EthClient,
-    vm_socket: &VmSocket,
-) -> color_eyre::Result<()> {
+async fn handle_signal(signal: Signal, eth_client: &EthClient, vm_socket: &VmSocket) -> Result<()> {
     let start_time = Utc::now().to_rfc3339();
 
     // TODO: Include the puzzle bytes in the signal payload
@@ -162,7 +158,7 @@ pub async fn call_faucet<P: Provider>(
     provider_with_wallet: Arc<P>,
     signer1: &PrivateKeySigner,
     signer2: &PrivateKeySigner,
-) -> color_eyre::Result<()> {
+) -> Result<()> {
     info!("Minting tokens from faucet...");
     let token = TokenContract::new(token_addr, &provider_with_wallet);
 
@@ -183,24 +179,4 @@ pub async fn call_faucet<P: Provider>(
     info!("Address 1: {usdt_balance_1}, Address 2: {usdt_balance_2}");
 
     Ok(())
-}
-
-fn build_signers(args: &cli::Args) -> color_eyre::Result<Vec<PrivateKeySigner>> {
-    match (&args.pk1, &args.pk2) {
-        // both present → parse, fail fast if either is malformed
-        (Some(pk1), Some(pk2)) => {
-            let s1: PrivateKeySigner = pk1.parse().context("parsing --pk1")?;
-            let s2: PrivateKeySigner = pk2.parse().context("parsing --pk2")?;
-            info!(
-                "Using wallet addresses: {} and {}",
-                s1.address(),
-                s2.address()
-            );
-            Ok(vec![s1, s2])
-        }
-        // neither present → run in read-only mode
-        (None, None) => Ok(vec![]),
-        // one present, one missing → treat as a configuration error
-        _ => bail!("Supply *both* --pk1 and --pk2 or neither"),
-    }
 }
