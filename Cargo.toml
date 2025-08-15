@@ -12,15 +12,17 @@ futures = "0.3"
 serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1.47", features = ["full"] }
 tracing = "0.1"
+utoipa = "5.4"
 
 [workspace.dependencies.alloy]
 version = "1.0.23"
 default-features = false
 features = [
   "serde",
+  "rlp",
   "contract",
   "signer-local",
   "providers",
   "rpc-types",
-  "rlp"
+  "reqwest"
 ]
