@@ -43,7 +43,7 @@ pub fn spawn_p2p(
     mut rx: UnboundedReceiver<Signal>,
     signal_pool: SignalPool,
 ) -> eyre::Result<()> {
-    debug!(?config);
+    debug!(?config, ?read_only);
 
     // Setup the swarm
     let mut swarm = libp2p::SwarmBuilder::with_new_identity()

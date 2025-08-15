@@ -68,6 +68,9 @@ impl RunArgs {
 
         // If we dont have two keys, don't process any signals
         let read_only = signers.is_empty();
+        if read_only {
+            warn!("No signers provided; running node in read-only mode!");
+        }
         let _ = spawn_p2p(config.p2p, read_only, signal_rx, signal_pool.clone());
 
         // Build eth clients
