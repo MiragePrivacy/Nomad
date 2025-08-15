@@ -1,61 +1,24 @@
+use alloy::hex::FromHex;
 use alloy::primitives::{Bytes, FixedBytes, Selector, U256};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-#[derive(Debug, Clone)]
-pub struct EscrowSelectors {
-    pub fund: Selector,                   // 0xa65e2cfd
-    pub bond: Selector,                   // 0x9940686e
-    pub request_cancellation: Selector,   // 0x81972d00
-    pub resume: Selector,                 // 0x046f7da2
-    pub collect: Selector,                // 0xe5225381
-    pub is_bonded: Selector,              // 0xcb766a56
-    pub withdraw: Selector,               // 0x3ccfd60b
-    pub current_reward_amount: Selector,  // 0x5a4fd645
-    pub bond_amount: Selector,            // 0x8bd03d0a
-    pub original_reward_amount: Selector, // 0xd415b3f9
-    pub bonded_executor: Selector,        // 0x1aa7c0ec
-    pub execution_deadline: Selector,     // 0x33ee5f35
-    pub current_payment_amount: Selector, // 0x80f323a7
-    pub total_bonds_deposited: Selector,  // 0xfe03a460
-    pub cancellation_request: Selector,   // 0x308657d7
-    pub funded: Selector,                 // 0xf3a504f2
-}
-
-impl EscrowSelectors {
-    pub fn new() -> Self {
-        Self {
-            fund: selector_from_hex("0xa65e2cfd"),
-            bond: selector_from_hex("0x9940686e"),
-            request_cancellation: selector_from_hex("0x81972d00"),
-            resume: selector_from_hex("0x046f7da2"),
-            collect: selector_from_hex("0xe5225381"),
-            is_bonded: selector_from_hex("0xcb766a56"),
-            withdraw: selector_from_hex("0x3ccfd60b"),
-            current_reward_amount: selector_from_hex("0x5a4fd645"),
-            bond_amount: selector_from_hex("0x8bd03d0a"),
-            original_reward_amount: selector_from_hex("0xd415b3f9"),
-            bonded_executor: selector_from_hex("0x1aa7c0ec"),
-            execution_deadline: selector_from_hex("0x33ee5f35"),
-            current_payment_amount: selector_from_hex("0x80f323a7"),
-            total_bonds_deposited: selector_from_hex("0xfe03a460"),
-            cancellation_request: selector_from_hex("0x308657d7"),
-            funded: selector_from_hex("0xf3a504f2"),
-        }
-    }
-}
-
-impl Default for EscrowSelectors {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-fn selector_from_hex(hex: &str) -> Selector {
-    let hex_clean = hex.trim_start_matches("0x");
-    let bytes = hex::decode(hex_clean).expect("Valid hex selector");
-    Selector::from(FixedBytes::from([bytes[0], bytes[1], bytes[2], bytes[3]]))
-}
+pub const ESCROW_FUND: Selector = Selector::new([0xa6, 0x5e, 0x2c, 0xfd]);
+pub const ESCROW_BOND: Selector = Selector::new([0x99, 0x40, 0x68, 0x6e]);
+pub const ESCROW_REQUEST_CANCELLATION: Selector = Selector::new([0x81, 0x97, 0x2d, 0x00]);
+pub const ESCROW_RESUME: Selector = Selector::new([0x04, 0x6f, 0x7d, 0xa2]);
+pub const ESCROW_COLLECT: Selector = Selector::new([0xe5, 0x22, 0x53, 0x81]);
+pub const ESCROW_IS_BONDED: Selector = Selector::new([0xcb, 0x76, 0x6a, 0x56]);
+pub const ESCROW_WITHDRAW: Selector = Selector::new([0x3c, 0xcf, 0xd6, 0x0b]);
+pub const ESCROW_CURRENT_REWARD_AMOUNT: Selector = Selector::new([0x5a, 0x4f, 0xd6, 0x45]);
+pub const ESCROW_BOND_AMOUNT: Selector = Selector::new([0x8b, 0xd0, 0x3d, 0x0a]);
+pub const ESCROW_ORIGINAL_REWARD_AMOUNT: Selector = Selector::new([0xd4, 0x15, 0xb3, 0xf9]);
+pub const ESCROW_BONDED_EXECUTOR: Selector = Selector::new([0x1a, 0xa7, 0xc0, 0xec]);
+pub const ESCROW_EXECUTION_DEADLINE: Selector = Selector::new([0x33, 0xee, 0x5f, 0x35]);
+pub const ESCROW_CURRENT_PAYMENT_AMOUNT: Selector = Selector::new([0x80, 0xf3, 0x23, 0xa7]);
+pub const ESCROW_TOTAL_BONDS_DEPOSITED: Selector = Selector::new([0xfe, 0x03, 0xa4, 0x60]);
+pub const ESCROW_CANCELLATION_REQUEST: Selector = Selector::new([0x30, 0x86, 0x57, 0xd7]);
+pub const ESCROW_FUNDED: Selector = Selector::new([0xf3, 0xa5, 0x04, 0xf2]);
 
 /// Stores mapping between original and obfuscated selectors
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -72,44 +35,47 @@ impl SelectorMapping {
         }
     }
 
-    /// Get obfuscated selector for a function
-    pub fn get_obfuscated_selector(&self, original_hex: &str) -> Option<Selector> {
+    /// Get obfuscated selector by original selector constant
+    pub fn get_obfuscated_selector(&self, original: Selector) -> Option<Selector> {
+        let original_hex = format!("0x{:08x}", u32::from_be_bytes(original.into()));
         self.mapping
-            .get(original_hex)
-            .map(|obfuscated_hex| selector_from_hex(obfuscated_hex))
+            .get(&original_hex)
+            .and_then(|obfuscated_hex| FixedBytes::from_hex(obfuscated_hex).ok())
+            .map(|bytes| Selector::new(*bytes))
     }
 
     /// Get obfuscated selector for bond function
     pub fn bond_selector(&self) -> Option<Selector> {
-        self.get_obfuscated_selector("0x9940686e")
+        self.get_obfuscated_selector(ESCROW_BOND)
     }
 
     /// Get obfuscated selector for collect function  
     pub fn collect_selector(&self) -> Option<Selector> {
-        self.get_obfuscated_selector("0xe5225381")
+        self.get_obfuscated_selector(ESCROW_COLLECT)
     }
 
     /// Get obfuscated selector for is_bonded function
     pub fn is_bonded_selector(&self) -> Option<Selector> {
-        self.get_obfuscated_selector("0xcb766a56")
+        self.get_obfuscated_selector(ESCROW_IS_BONDED)
     }
 
     /// Get obfuscated selector for fund function
     pub fn fund_selector(&self) -> Option<Selector> {
-        self.get_obfuscated_selector("0xa65e2cfd")
+        self.get_obfuscated_selector(ESCROW_FUND)
     }
 
     /// Check if this mapping contains the required escrow function selectors
     pub fn validate_escrow_selectors(&self) -> Result<(), String> {
         let required_functions = [
-            ("bond", "0x9940686e"),
-            ("collect", "0xe5225381"),
-            ("is_bonded", "0xcb766a56"),
+            ("bond", ESCROW_BOND),
+            ("collect", ESCROW_COLLECT),
+            ("is_bonded", ESCROW_IS_BONDED),
         ];
 
         let mut missing = Vec::new();
         for (name, selector) in required_functions {
-            if !self.mapping.contains_key(selector) {
+            let selector_hex = format!("0x{:08x}", u32::from_be_bytes(selector.into()));
+            if !self.mapping.contains_key(&selector_hex) {
                 missing.push(name);
             }
         }
@@ -142,12 +108,12 @@ impl Default for SelectorMapping {
 /// let escrow = Escrow::new(address, &provider);
 /// escrow.bond(U256::from(1000)).send().await?;
 ///
-/// // Alloy automatically:
-/// // 1. Takes the function signature: bond(uint256)
-/// // 2. Computes the selector: keccak256("bond(uint256)")[0:4] = 0x9940686e
-/// // 3. Encodes parameters: 1000 → [0x00, 0x00, ..., 0x03, 0xe8] (32 bytes)
-/// // 4. Combines: [0x99, 0x40, 0x68, 0x6e] + [0x00, ..., 0x03, 0xe8]
-/// // 5. Sends the transaction
+/// Alloy automatically:
+/// 1. Takes the function signature: bond(uint256)
+/// 2. Computes the selector: keccak256("bond(uint256)")[0:4] = 0x9940686e
+/// 3. Encodes parameters: 1000 → [0x00, 0x00, ..., 0x03, 0xe8] (32 bytes)
+/// 4. Combines: [0x99, 0x40, 0x68, 0x6e] + [0x00, ..., 0x03, 0xe8]
+/// 5. Sends the transaction
 /// ```
 ///
 /// But for obfuscated contracts, the selectors are different at runtime, so we must
