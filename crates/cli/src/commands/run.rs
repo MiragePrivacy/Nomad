@@ -8,6 +8,7 @@ use nomad_pool::SignalPool;
 use nomad_rpc::spawn_rpc_server;
 use nomad_types::{ReceiptFormat, Signal};
 use nomad_vm::{NomadVm, VmSocket};
+use reqwest::Url;
 use tokio::sync::mpsc::unbounded_channel;
 use tracing::{info, warn};
 
@@ -26,7 +27,7 @@ pub struct RunArgs {
     pub peer: Option<String>,
     /// HTTP RPC URL for sending transactions
     #[arg(long, env("HTTP_RPC"))]
-    pub http_rpc: Option<String>,
+    pub http_rpc: Option<Url>,
 }
 
 impl RunArgs {

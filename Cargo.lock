@@ -3904,6 +3904,7 @@ dependencies = [
  "serde",
  "thiserror 2.0.14",
  "tracing",
+ "url",
 ]
 
 [[package]]
@@ -6124,6 +6125,7 @@ dependencies = [
  "form_urlencoded",
  "idna",
  "percent-encoding",
+ "serde",
 ]
 
 [[package]]

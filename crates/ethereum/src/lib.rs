@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
 use nomad_types::Signal;
+use url::Url;
 
 mod proof;
 
@@ -40,26 +41,24 @@ sol! {
 }
 
 #[derive(Serialize, Deserialize, Clone)]
+#[serde(default)]
 pub struct EthConfig {
-    pub rpc: String,
+    pub rpc: Url,
 }
 
 impl Debug for EthConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // Hide potentially sensitive query parameters
-        let mut split = self.rpc.split('?');
-        let mut trimmed = split.next().unwrap().to_string();
-        if split.next().is_some() {
-            trimmed += "?==redacted==";
-        }
-        f.debug_struct("EthConfig").field("rpc", &trimmed).finish()
+        f.debug_struct("EthConfig")
+            .field("rpc", &self.rpc.host_str().unwrap_or("missing rpc host"))
+            .finish()
     }
 }
 
 impl Default for EthConfig {
     fn default() -> Self {
         Self {
-            rpc: "https://ethereum-rpc.publicnode.com".into(),
+            rpc: "https://ethereum-rpc.publicnode.com".parse().unwrap(),
         }
     }
 }
@@ -116,7 +115,7 @@ impl EthClient {
             .collect();
         let provider = ProviderBuilder::new()
             .wallet(wallet)
-            .connect(&config.rpc)
+            .connect(config.rpc.as_str())
             .await?;
         Ok(Self { provider, accounts })
     }
