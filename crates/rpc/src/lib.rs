@@ -1,9 +1,11 @@
-use jsonrpsee::{core::async_trait, proc_macros::rpc, server::Server};
+use jsonrpsee::{core::async_trait, proc_macros::rpc, server::Server, types::ErrorObjectOwned};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::{debug, info, instrument};
 
 use nomad_types::Signal;
+
+pub use jsonrpsee::http_client::HttpClient;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
@@ -17,10 +19,10 @@ impl Default for RpcConfig {
     }
 }
 
-#[rpc(server, namespace = "mirage")]
+#[rpc(server, client, namespace = "mirage")]
 pub trait MirageRpc {
     #[method(name = "signal")]
-    async fn signal(&self, message: Signal) -> String;
+    async fn signal(&self, message: Signal) -> Result<String, ErrorObjectOwned>;
 }
 
 struct MirageServer {
@@ -30,12 +32,17 @@ struct MirageServer {
 #[async_trait]
 impl MirageRpcServer for MirageServer {
     #[instrument(skip(self))]
-    async fn signal(&self, message: Signal) -> String {
+    async fn signal(&self, message: Signal) -> Result<String, ErrorObjectOwned> {
         info!("Received RPC signal");
-        self.signal_tx
-            .send(message.clone())
-            .expect("failed to send signal to gossip");
-        format!("Signal acknowledged: {message}")
+        if self.signal_tx.send(message.clone()).is_err() {
+            return Err(ErrorObjectOwned::owned(
+                500,
+                "Failed to broadcast signal",
+                None::<()>,
+            ));
+        }
+
+        Ok(format!("Signal acknowledged: {message}"))
     }
 }
 
