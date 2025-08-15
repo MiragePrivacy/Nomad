@@ -137,7 +137,7 @@ impl Default for SelectorMapping {
 /// generated bindings can't handle runtime selector changes.
 ///
 /// When using standard contracts, Alloy automatically handles call data construction:
-/// ```rust
+/// ```rust,ignore
 /// // When you write this:
 /// let escrow = Escrow::new(address, &provider);
 /// escrow.bond(U256::from(1000)).send().await?;
