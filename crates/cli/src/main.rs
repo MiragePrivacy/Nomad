@@ -14,8 +14,14 @@ mod config;
 #[command(author, version, about)]
 pub(crate) struct Args {
     /// Path to config file
-    #[arg(short, long, global = true, display_order(0))]
-    pub config: Option<PathBuf>,
+    #[arg(
+        short,
+        long,
+        global = true,
+        display_order(0),
+        default_value = "~/.config/nomad/config.toml"
+    )]
+    pub config: PathBuf,
     /// Ethereum private keys to use
     #[arg(long, global = true, action(ArgAction::Append), display_order(0))]
     pub pk: Option<Vec<String>>,
@@ -83,16 +89,15 @@ impl Args {
         trace!(env_filter);
     }
 
-    // Setup and execute the given command
-    pub async fn execute(self) -> Result<()> {
-        color_eyre::install()?;
+    fn execute(self) -> Result<()> {
         self.setup_logging();
-        let config = config::Config::load(self.config.as_ref())?;
         let signers = self.build_signers()?;
-        self.cmd.execute(config, signers).await
+        let config = config::Config::load(self.config)?;
+        self.cmd.execute(config, signers)
     }
 }
 
 fn main() -> Result<()> {
-    tokio::runtime::Runtime::new()?.block_on(Args::parse().execute())
+    color_eyre::install()?;
+    Args::parse().execute()
 }

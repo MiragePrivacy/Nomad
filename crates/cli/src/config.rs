@@ -17,12 +17,9 @@ pub struct Config {
 }
 
 impl Config {
-    const DEFAULT_PATH: &str = "~/.config/nomad/config.toml";
-
     /// Load the config, filling in missing values with defaults, and writing to disk after.
-    pub fn load(path: Option<impl Into<PathBuf>>) -> Result<Self> {
-        let path = path.map(|v| v.into()).unwrap_or(Self::DEFAULT_PATH.into());
-        let path = path.resolve().to_path_buf();
+    pub fn load(path: impl Into<PathBuf>) -> Result<Self> {
+        let path = path.into().resolve().to_path_buf();
 
         // Read config or get the default
         let config = std::fs::read_to_string(&path)

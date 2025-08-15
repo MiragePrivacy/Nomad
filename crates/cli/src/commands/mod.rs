@@ -20,11 +20,13 @@ pub enum Command {
 
 impl Command {
     /// Run the given command
-    pub async fn execute(self, config: Config, signers: Vec<PrivateKeySigner>) -> Result<()> {
-        match self {
-            Command::Run(args) => args.execute(config, signers).await,
-            Command::Rpc(args) => args.execute(config, signers).await,
-            Command::Faucet(args) => args.execute(config, signers).await,
-        }
+    pub fn execute(self, config: Config, signers: Vec<PrivateKeySigner>) -> Result<()> {
+        tokio::runtime::Runtime::new()?.block_on(async move {
+            match self {
+                Command::Run(args) => args.execute(config, signers).await,
+                Command::Rpc(args) => args.execute(config, signers).await,
+                Command::Faucet(args) => args.execute(config, signers).await,
+            }
+        })
     }
 }
