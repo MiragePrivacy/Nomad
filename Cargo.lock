@@ -3949,6 +3949,7 @@ name = "nomad-types"
 version = "0.1.0"
 dependencies = [
  "alloy",
+ "paste",
  "serde",
  "tracing",
 ]
