@@ -16,7 +16,7 @@ use alloy::{
     transports::{RpcError, TransportErrorKind},
 };
 use serde::{Deserialize, Serialize};
-use tracing::debug;
+use tracing::{debug, info};
 
 use nomad_types::Signal;
 
@@ -82,13 +82,13 @@ pub struct EthClient {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ClientError {
-    #[error("RPC Error: {_0:?}")]
+    #[error("RPC Error")]
     Rpc(#[from] RpcError<TransportErrorKind>),
-    #[error("Contract call failed: {_0:?}")]
+    #[error("Contract call failed")]
     Contract(#[from] alloy::contract::Error),
-    #[error("Failed to watch pending transaction: {_0}")]
+    #[error("Failed to watch pending transaction")]
     Pending(#[from] alloy::providers::PendingTransactionError),
-    #[error("Failed to generate proof: {_0}")]
+    #[error("Failed to generate proof")]
     Proof(#[from] proof::ProofError),
     #[error("Contract already bonded")]
     AlreadyBonded,
@@ -128,6 +128,7 @@ impl EthClient {
         // Execute mint transactions and add their futures to the set
         let mut futs = Vec::new();
         for account in self.accounts.clone() {
+            info!("Minting tokens for {account}");
             let res = token.mint().from(account).send().await?;
             futs.push(res.watch());
         }
