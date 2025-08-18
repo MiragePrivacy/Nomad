@@ -7,6 +7,7 @@ use alloy::{
     rpc::types::TransactionReceipt,
 };
 use alloy_trie::{proof::ProofRetainer, root::adjust_index_for_rlp, HashBuilder, Nibbles};
+use tracing::trace;
 
 use crate::{ClientError, EthClient};
 
@@ -45,17 +46,30 @@ impl EthClient {
         let Some(block) = self.provider.get_block_by_hash(block_hash).await? else {
             return Err(ProofError::TransactionNotFound.into());
         };
-        let transactions = match &block.transactions {
-            alloy::rpc::types::BlockTransactions::Full(items) => Ok(items),
-            alloy::rpc::types::BlockTransactions::Hashes(_) => Err(ProofError::TransactionNotFound),
-            alloy::rpc::types::BlockTransactions::Uncle => Err(ProofError::TransactionNotFound),
-        }?;
+        trace!(?block);
+        let target_tx = match &block.transactions {
+            alloy::rpc::types::BlockTransactions::Full(items) => {
+                // Validate transaction index
+                if tx_index >= items.len() as u64 {
+                    return Err(ProofError::TransactionNotFound.into());
+                }
+                items[tx_index as usize].clone()
+            }
+            alloy::rpc::types::BlockTransactions::Hashes(hashes) => {
+                if tx_index >= hashes.len() as u64 {
+                    return Err(ProofError::TransactionNotFound.into());
+                }
+                self.provider
+                    .get_transaction_by_hash(hashes[tx_index as usize])
+                    .await?
+                    .ok_or(ProofError::TransactionNotFound)?
+            }
+            alloy::rpc::types::BlockTransactions::Uncle => {
+                return Err(ProofError::TransactionNotFound.into())
+            }
+        };
 
-        // Validate transaction index
-        if tx_index >= transactions.len() as u64 {
-            return Err(ProofError::TransactionNotFound.into());
-        }
-        let target_tx = &transactions[tx_index as usize];
+        trace!(?target_tx);
 
         // Get the transaction receipt
         let Some(receipt) = self
@@ -65,6 +79,7 @@ impl EthClient {
         else {
             return Err(ProofError::TransactionNotFound.into());
         };
+        trace!(?receipt);
 
         // Validate log index if provided and extract target log
         let target_log = if let Some(log_idx) = log_index {
@@ -75,6 +90,7 @@ impl EthClient {
         } else {
             None
         };
+        trace!(?target_log);
 
         let Some(receipts) = self.provider.get_block_receipts(block_hash.into()).await? else {
             return Err(ProofError::TransactionNotFound.into());
@@ -165,7 +181,7 @@ impl EthClient {
     }
 }
 
-///FROM KONA: https://github.com/op-rs/kona/blob/HEAD/crates/proof/mpt/src/util.rs#L7-L51
+/// FROM KONA: https://github.com/op-rs/kona/blob/HEAD/crates/proof/mpt/src/util.rs#L7-L51
 /// Compute a trie root of the collection of items with a custom encoder.
 pub fn ordered_trie_with_encoder<T, F>(items: &[T], mut encode: F) -> HashBuilder
 where
