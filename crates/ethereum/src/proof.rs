@@ -4,10 +4,10 @@ use alloy::{
     primitives::{BlockHash, Bytes, Log},
     providers::Provider,
     rlp::{BufMut, Encodable},
-    rpc::types::TransactionReceipt,
 };
 use alloy_trie::{proof::ProofRetainer, root::adjust_index_for_rlp, HashBuilder, Nibbles};
-use tracing::trace;
+use serde::{Deserialize, Serialize};
+use tracing::{instrument, trace};
 
 use crate::{ClientError, EthClient};
 
@@ -21,12 +21,12 @@ pub enum ProofError {
     LogMismatch,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProofBlob {
     /// RLP-encoded block header
     pub block_header: Bytes,
     /// The transaction receipt
-    pub receipt: TransactionReceipt,
+    pub receipt: Bytes,
     /// Minimal MPT proof nodes linking receipt to receiptsRoot
     pub proof_nodes: Bytes,
     // RLP-encoded transaction index
@@ -37,6 +37,7 @@ pub struct ProofBlob {
 
 impl EthClient {
     /// Creates a new `ProofInput` with the given block hash, transaction index, and optional log index.
+    #[instrument(skip(self))]
     pub(crate) async fn generate_proof(
         &self,
         block_hash: BlockHash,
@@ -46,7 +47,7 @@ impl EthClient {
         let Some(block) = self.provider.get_block_by_hash(block_hash).await? else {
             return Err(ProofError::TransactionNotFound.into());
         };
-        trace!(?block);
+
         let target_tx = match &block.transactions {
             alloy::rpc::types::BlockTransactions::Full(items) => {
                 // Validate transaction index
@@ -69,9 +70,6 @@ impl EthClient {
             }
         };
 
-        trace!(?target_tx);
-
-        // Get the transaction receipt
         let Some(receipt) = self
             .provider
             .get_transaction_receipt(*target_tx.inner.hash())
@@ -79,7 +77,6 @@ impl EthClient {
         else {
             return Err(ProofError::TransactionNotFound.into());
         };
-        trace!(?receipt);
 
         // Validate log index if provided and extract target log
         let target_log = if let Some(log_idx) = log_index {
@@ -90,7 +87,6 @@ impl EthClient {
         } else {
             None
         };
-        trace!(?target_log);
 
         let Some(receipts) = self.provider.get_block_receipts(block_hash.into()).await? else {
             return Err(ProofError::TransactionNotFound.into());
@@ -171,13 +167,21 @@ impl EthClient {
         let adjusted_index = adjust_index_for_rlp(tx_index as usize, ordered_receipts.len());
         adjusted_index.encode(&mut path_buffer);
 
-        Ok(ProofBlob {
+        let proof = ProofBlob {
             block_header: Bytes::from(block_header_encoded),
-            receipt,
+            receipt: Bytes::from(receipt_encoded),
             proof_nodes: Bytes::from(proof_nodes_bytes),
             receipt_path: Bytes::from(path_buffer),
             target_log: proof_target_log,
-        })
+        };
+
+        let total = proof.block_header.len()
+            + proof.receipt.len()
+            + proof.proof_nodes.len()
+            + proof.receipt_path.len();
+        trace!("Generated {total} byte proof");
+
+        Ok(proof)
     }
 }
 
