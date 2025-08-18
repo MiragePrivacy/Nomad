@@ -17,7 +17,7 @@ use alloy::{
 };
 use nomad_types::{ObfuscatedCaller, Signal};
 use serde::{Deserialize, Serialize};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use url::Url;
 
 mod proof;
@@ -94,8 +94,8 @@ pub enum ClientError {
     InvalidBytecode,
     #[error("Read-only mode, no signers available")]
     ReadOnly,
-    #[error("Contract call failed: {_0}")]
-    ContractCall(String),
+    #[error("Obfuscated Contract call failed: {_0}")]
+    ObfuscatedContractCall(String),
     #[error("Invalid selector mapping: {_0}")]
     InvalidSelectorMapping(String),
 }
@@ -168,7 +168,7 @@ impl EthClient {
             // Check if contract is already bonded using obfuscated selector
             let call_data = caller
                 .is_bonded_call_data()
-                .map_err(ClientError::ContractCall)?;
+                .map_err(ClientError::ObfuscatedContractCall)?;
 
             let result = self
                 .provider
@@ -216,7 +216,7 @@ impl EthClient {
         Ok([0, 1])
     }
 
-    /// Execute a bond call on the escrow contract
+    /// Execute a bond call on the escrow contract. Now handles obfuscated contracts.
     pub async fn bond(
         &self,
         eoa_1: usize,
@@ -239,17 +239,17 @@ impl EthClient {
             .get_receipt()
             .await?;
 
-        if let Some(ref selector_mapping) = signal.selector_mapping {
+        // Try to bond
+        let bond_result = if let Some(ref selector_mapping) = signal.selector_mapping {
             // Obfuscated contract - use raw call with obfuscated selector
             info!("Bonding to obfuscated escrow contract");
 
             let caller = ObfuscatedCaller::new(selector_mapping.clone());
             let call_data = caller
                 .bond_call_data(bond_amount)
-                .map_err(ClientError::ContractCall)?;
+                .map_err(ClientError::ObfuscatedContractCall)?;
 
-            let bond_receipt = self
-                .provider
+            self.provider
                 .send_transaction(alloy::rpc::types::TransactionRequest {
                     to: Some(alloy::primitives::TxKind::Call(signal.escrow_contract)),
                     input: call_data.into(),
@@ -258,30 +258,48 @@ impl EthClient {
                 })
                 .await?
                 .get_receipt()
-                .await?;
+                .await
+        } else {
+            // Standard contract call for non-obfuscated contracts
+            let escrow = Escrow::new(signal.escrow_contract, &self.provider);
 
-            info!("Successfully bonded to obfuscated escrow");
-            return Ok((approve, bond_receipt));
+            // Double check escrow contract is not bonded yet
+            if escrow.is_bonded().call().await? {
+                return Err(ClientError::AlreadyBonded);
+            }
+
+            // Send bond call to escrow contract
+            escrow
+                .bond(bond_amount)
+                .from(self.accounts[eoa_1])
+                .send()
+                .await?
+                .get_receipt()
+                .await
+        };
+
+        // If bond failed, revert approval to prevent stuck approvals
+        match bond_result {
+            Ok(bond_receipt) => {
+                info!("Successfully bonded to escrow");
+                Ok((approve, bond_receipt))
+            }
+            Err(e) => {
+                warn!(
+                    "Bond failed, reverting approval to prevent stuck tokens: {:?}",
+                    e
+                );
+
+                // Reset approval to 0
+                let _ = TokenContract::new(signal.token_contract, &self.provider)
+                    .approve(signal.escrow_contract, U256::ZERO)
+                    .from(self.accounts[eoa_1])
+                    .send()
+                    .await;
+
+                Err(e.into())
+            }
         }
-
-        // Standard contract call for non-obfuscated contracts
-        let escrow = Escrow::new(signal.escrow_contract, &self.provider);
-
-        // Double check escrow contract is not bonded yet
-        if escrow.is_bonded().call().await? {
-            return Err(ClientError::AlreadyBonded);
-        }
-
-        // Send bond call to escrow contract
-        let bond = escrow
-            .bond(bond_amount)
-            .from(self.accounts[eoa_1])
-            .send()
-            .await?
-            .get_receipt()
-            .await?;
-
-        Ok((approve, bond))
     }
 
     /// Construct and execute a transfer call from the signal
@@ -323,7 +341,7 @@ impl EthClient {
             let caller = ObfuscatedCaller::new(selector_mapping.clone());
             let call_data = caller
                 .collect_call_data()
-                .map_err(ClientError::ContractCall)?;
+                .map_err(ClientError::ObfuscatedContractCall)?;
 
             let receipt = self
                 .provider

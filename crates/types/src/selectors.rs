@@ -1,10 +1,10 @@
 use alloy::primitives::{Bytes, Selector, U256};
 
-// Generate escrow contract selectors and mapping struct using macro
+/// Generate escrow contract selectors and mapping struct
 macro_rules! impl_contract_selectors {
     ( $title:ident { $( $id:ident: $lit:expr ),* $(,)? } ) => {
         paste::paste! {
-            // Generate const values
+            /// Generate const values
             $( pub const [< $title:upper _ $id:upper >]: alloy::primitives::Selector = alloy::primitives::fixed_bytes!($lit); )*
 
             /// Selector mapping struct with compile-time validation and fast lookups
@@ -21,15 +21,13 @@ macro_rules! impl_contract_selectors {
                         _ => None,
                     }
                 }
+            }
 
-                /// Validate that all required selectors are present and not zero
-                pub fn validate(&self) -> Result<(), String> {
-                    $(
-                        if self.[< $id:lower >] == Selector::ZERO {
-                            return Err(format!("Missing or invalid mapping for {}", stringify!($id)));
-                        }
-                    )*
-                    Ok(())
+            impl Default for [< $title Mappings >] {
+                fn default() -> Self {
+                    Self {
+                        $( [< $id:lower >]: Selector::ZERO, )*
+                    }
                 }
             }
         }
@@ -57,26 +55,6 @@ impl_contract_selectors!(Escrow {
 });
 
 impl EscrowMappings {
-    /// Get obfuscated selector for bond function
-    pub fn bond_selector(&self) -> Selector {
-        self.bond
-    }
-
-    /// Get obfuscated selector for collect function  
-    pub fn collect_selector(&self) -> Selector {
-        self.collect
-    }
-
-    /// Get obfuscated selector for is_bonded function
-    pub fn is_bonded_selector(&self) -> Selector {
-        self.is_bonded
-    }
-
-    /// Get obfuscated selector for fund function
-    pub fn fund_selector(&self) -> Selector {
-        self.fund
-    }
-
     /// Check if this mapping contains the required escrow function selectors
     pub fn validate_escrow_selectors(&self) -> Result<(), String> {
         // Check that critical functions have valid mappings
@@ -145,7 +123,7 @@ impl ObfuscatedCaller {
 
     /// Prepare is_bonded() call data using obfuscated selector
     pub fn is_bonded_call_data(&self) -> Result<Bytes, String> {
-        let selector = self.selector_mapping.is_bonded_selector();
+        let selector = self.selector_mapping.is_bonded;
         if selector == Selector::ZERO {
             return Err("Missing is_bonded selector mapping".to_string());
         }
@@ -156,7 +134,7 @@ impl ObfuscatedCaller {
 
     /// Prepare bond(uint256) call data using obfuscated selector
     pub fn bond_call_data(&self, bond_amount: U256) -> Result<Bytes, String> {
-        let selector = self.selector_mapping.bond_selector();
+        let selector = self.selector_mapping.bond;
         if selector == Selector::ZERO {
             return Err("Missing bond selector mapping".to_string());
         }
@@ -172,7 +150,7 @@ impl ObfuscatedCaller {
 
     /// Prepare collect() call data using obfuscated selector
     pub fn collect_call_data(&self) -> Result<Bytes, String> {
-        let selector = self.selector_mapping.collect_selector();
+        let selector = self.selector_mapping.collect;
         if selector == Selector::ZERO {
             return Err("Missing collect selector mapping".to_string());
         }
@@ -185,28 +163,5 @@ impl ObfuscatedCaller {
     pub fn parse_bool_result(&self, result: &[u8]) -> bool {
         // Boolean results are returned as 32 bytes with the last byte containing the bool value
         result.len() >= 32 && result[31] != 0
-    }
-}
-
-impl Default for EscrowMappings {
-    fn default() -> Self {
-        Self {
-            fund: Selector::ZERO,
-            bond: Selector::ZERO,
-            request_cancellation: Selector::ZERO,
-            resume: Selector::ZERO,
-            collect: Selector::ZERO,
-            is_bonded: Selector::ZERO,
-            withdraw: Selector::ZERO,
-            current_reward_amount: Selector::ZERO,
-            bond_amount: Selector::ZERO,
-            original_reward_amount: Selector::ZERO,
-            bonded_executor: Selector::ZERO,
-            execution_deadline: Selector::ZERO,
-            current_payment_amount: Selector::ZERO,
-            total_bonds_deposited: Selector::ZERO,
-            cancellation_request: Selector::ZERO,
-            funded: Selector::ZERO,
-        }
     }
 }
