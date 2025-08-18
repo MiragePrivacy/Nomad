@@ -1,15 +1,17 @@
 use alloy::{
     consensus::{Receipt, ReceiptEnvelope, ReceiptWithBloom, TxType},
     eips::Encodable2718 as _,
-    primitives::{BlockHash, Bytes, Log},
+    primitives::{Bytes, Log},
     providers::Provider,
     rlp::{BufMut, Encodable},
+    rpc::types::TransactionReceipt,
 };
 use alloy_trie::{proof::ProofRetainer, root::adjust_index_for_rlp, HashBuilder, Nibbles};
+use nomad_types::Signal;
 use serde::{Deserialize, Serialize};
 use tracing::{instrument, trace};
 
-use crate::{ClientError, EthClient};
+use crate::{ClientError, EthClient, IERC20};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProofError {
@@ -32,60 +34,41 @@ pub struct ProofBlob {
     // RLP-encoded transaction index
     pub receipt_path: Bytes,
     /// The specific log if log_index was provided
-    pub target_log: Option<Log>,
+    pub target_log: Log,
 }
 
 impl EthClient {
     /// Creates a new `ProofInput` with the given block hash, transaction index, and optional log index.
-    #[instrument(skip(self))]
+    #[instrument(skip_all, fields(tx = ?receipt.transaction_hash))]
     pub(crate) async fn generate_proof(
         &self,
-        block_hash: BlockHash,
-        tx_index: u64,
-        log_index: Option<u64>,
+        signal: &Signal,
+        receipt: &TransactionReceipt,
     ) -> Result<ProofBlob, ClientError> {
+        // Locate signal transfer event in the receipt logs
+        let mut target_log = None;
+        for raw_log in receipt.logs() {
+            let log = raw_log
+                .log_decode::<IERC20::Transfer>()
+                .map_err(|_| ProofError::LogMismatch)?;
+            let data = log.data();
+            if log.address() == signal.token_contract
+                && data.to == signal.recipient
+                && data.value == signal.transfer_amount
+            {
+                target_log = Some(raw_log.clone());
+            }
+        }
+        let Some(target_log) = target_log else {
+            return Err(ProofError::LogMismatch.into());
+        };
+        let Some(log_idx) = target_log.log_index else {
+            return Err(ProofError::LogMismatch.into());
+        };
+
+        let block_hash = receipt.block_hash.unwrap();
         let Some(block) = self.provider.get_block_by_hash(block_hash).await? else {
             return Err(ProofError::TransactionNotFound.into());
-        };
-
-        let target_tx = match &block.transactions {
-            alloy::rpc::types::BlockTransactions::Full(items) => {
-                // Validate transaction index
-                if tx_index >= items.len() as u64 {
-                    return Err(ProofError::TransactionNotFound.into());
-                }
-                items[tx_index as usize].clone()
-            }
-            alloy::rpc::types::BlockTransactions::Hashes(hashes) => {
-                if tx_index >= hashes.len() as u64 {
-                    return Err(ProofError::TransactionNotFound.into());
-                }
-                self.provider
-                    .get_transaction_by_hash(hashes[tx_index as usize])
-                    .await?
-                    .ok_or(ProofError::TransactionNotFound)?
-            }
-            alloy::rpc::types::BlockTransactions::Uncle => {
-                return Err(ProofError::TransactionNotFound.into())
-            }
-        };
-
-        let Some(receipt) = self
-            .provider
-            .get_transaction_receipt(*target_tx.inner.hash())
-            .await?
-        else {
-            return Err(ProofError::TransactionNotFound.into());
-        };
-
-        // Validate log index if provided and extract target log
-        let target_log = if let Some(log_idx) = log_index {
-            if log_idx >= receipt.logs().len() as u64 {
-                return Err(ProofError::LogIndexOutOfBounds.into());
-            }
-            Some(receipt.logs()[log_idx as usize].clone())
-        } else {
-            None
         };
 
         let Some(receipts) = self.provider.get_block_receipts(block_hash.into()).await? else {
@@ -125,6 +108,8 @@ impl EthClient {
                 rlp.encode_2718(buf)
             });
 
+        let tx_index = receipt.transaction_index.unwrap();
+
         //check receipts root is correct
         let root = list.root();
         assert_eq!(block.header.receipts_root, root, "Receipts root mismatch");
@@ -136,22 +121,17 @@ impl EthClient {
         let mut receipt_encoded = Vec::new();
         target_receipt.encode_2718(&mut receipt_encoded);
 
-        //chek logs if log index is provided
         // Validate log index if provided and extract target log
-        let proof_target_log = if let Some(log_idx) = log_index {
-            if log_idx >= target_receipt.logs().len() as u64 {
-                return Err(ProofError::LogIndexOutOfBounds.into());
-            }
-            Some(target_receipt.logs()[log_idx as usize].clone())
-        } else {
-            None
-        };
+        if log_idx >= target_receipt.logs().len() as u64 {
+            return Err(ProofError::LogIndexOutOfBounds.into());
+        }
+        let proof_target_log = target_receipt.logs()[log_idx as usize].clone();
 
         // Ensure the target_log from RPC receipt matches the one from consensus receipt
-        if let (Some(rpc_log), Some(consensus_log)) = (&target_log, &proof_target_log) {
-            if rpc_log.address() == consensus_log.address || rpc_log.data() != &consensus_log.data {
-                return Err(ProofError::LogMismatch.into());
-            }
+        if target_log.address() != proof_target_log.address
+            || target_log.data() != &proof_target_log.data
+        {
+            return Err(ProofError::LogMismatch.into());
         }
 
         // RLP encode the block header

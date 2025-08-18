@@ -83,7 +83,7 @@ impl RunArgs {
         loop {
             let signal = signal_pool.sample().await;
             if let Err(e) = handle_signal(signal, &eth_client, &vm_socket).await {
-                warn!("failed to handle signal: {e}");
+                warn!("failed to handle signal: {e:?}");
             }
         }
     }

@@ -24,7 +24,9 @@ mod proof;
 
 sol! {
     #[sol(rpc)]
-    contract TokenContract {
+    contract IERC20 {
+        event Transfer(address indexed from, address indexed to, uint256 value);
+
         function balanceOf(address) public view returns (uint256);
         function mint() external;
         function transfer(address to, uint256 value) external returns (bool);
@@ -129,7 +131,7 @@ impl EthClient {
 
     /// Faucet tokens from a given contract into each ethereum account
     pub async fn faucet(&self, contract: Address) -> Result<(), ClientError> {
-        let token = TokenContract::new(contract, &self.provider);
+        let token = IERC20::new(contract, &self.provider);
 
         // Execute mint transactions and add their futures to the set
         let mut futs = Vec::new();
@@ -212,7 +214,7 @@ impl EthClient {
             return Err(ClientError::ReadOnly);
         }
 
-        let token = TokenContract::new(signal.token_contract, &self.provider);
+        let token = IERC20::new(signal.token_contract, &self.provider);
 
         for account in self.accounts.clone() {
             let balance = token.balanceOf(account).call().await?;
@@ -242,7 +244,7 @@ impl EthClient {
             .unwrap();
 
         // Approve bond amount for escrow contract, on the token contract (always the same)
-        let approve = TokenContract::new(signal.token_contract, &self.provider)
+        let approve = IERC20::new(signal.token_contract, &self.provider)
             .approve(signal.escrow_contract, bond_amount)
             .from(self.accounts[eoa_1])
             .send()
@@ -302,7 +304,7 @@ impl EthClient {
                 );
 
                 // Reset approval to 0
-                let _ = TokenContract::new(signal.token_contract, &self.provider)
+                let _ = IERC20::new(signal.token_contract, &self.provider)
                     .approve(signal.escrow_contract, U256::ZERO)
                     .from(self.accounts[eoa_1])
                     .send()
@@ -319,22 +321,14 @@ impl EthClient {
         eoa_2: usize,
         signal: Signal,
     ) -> Result<(TransactionReceipt, proof::ProofBlob), ClientError> {
-        let receipt = TokenContract::new(signal.token_contract, &self.provider)
+        let receipt = IERC20::new(signal.token_contract, &self.provider)
             .transfer(signal.recipient, signal.transfer_amount)
             .from(self.accounts[eoa_2])
             .send()
             .await?
             .get_receipt()
             .await?;
-
-        let proof = self
-            .generate_proof(
-                receipt.block_hash.unwrap(),
-                receipt.transaction_index.unwrap(),
-                None,
-            )
-            .await?;
-
+        let proof = self.generate_proof(&signal, &receipt).await?;
         Ok((receipt, proof))
     }
 
