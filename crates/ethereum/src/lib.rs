@@ -1,8 +1,11 @@
-use std::fmt::Debug;
+use std::{fmt::Debug, time::Duration};
 
 use alloy::{
     network::EthereumWallet,
-    primitives::{Address, U256},
+    primitives::{
+        utils::{format_ether, parse_ether},
+        Address, U256,
+    },
     providers::{
         fillers::{
             BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller,
@@ -26,7 +29,6 @@ sol! {
     #[sol(rpc)]
     contract IERC20 {
         event Transfer(address indexed from, address indexed to, uint256 value);
-
         function balanceOf(address) public view returns (uint256);
         function mint() external;
         function transfer(address to, uint256 value) external returns (bool);
@@ -44,7 +46,10 @@ sol! {
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(default)]
 pub struct EthConfig {
+    /// Url for rpc commands
     pub rpc: Url,
+    /// Minimum eth required for an account to be usable
+    pub min_eth: f64,
 }
 
 impl Debug for EthConfig {
@@ -60,6 +65,7 @@ impl Default for EthConfig {
     fn default() -> Self {
         Self {
             rpc: "https://ethereum-rpc.publicnode.com".parse().unwrap(),
+            min_eth: 0.01,
         }
     }
 }
@@ -81,6 +87,7 @@ type BaseProvider = FillProvider<
 pub struct EthClient {
     provider: BaseProvider,
     accounts: Vec<Address>,
+    min_eth: (U256, f64),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -103,6 +110,10 @@ pub enum ClientError {
     ObfuscatedContractCall(String),
     #[error("Invalid selector mapping: {_0}")]
     InvalidSelectorMapping(String),
+    #[error("Eth below minimum balance ({_0}) for the accounts: {_1:?}, need at least {_2} account funded")]
+    NotEnoughEth(f64, Vec<usize>, usize),
+    #[error("No accounts have enough token balance to execute the signal")]
+    NotEnoughTokens,
 }
 
 impl EthClient {
@@ -126,7 +137,16 @@ impl EthClient {
             .with_simple_nonce_management()
             .connect(config.rpc.as_str())
             .await?;
-        Ok(Self { provider, accounts })
+        let min_eth = (
+            parse_ether(&config.min_eth.to_string()).unwrap(),
+            config.min_eth,
+        );
+
+        Ok(Self {
+            provider,
+            accounts,
+            min_eth,
+        })
     }
 
     /// Faucet tokens from a given contract into each ethereum account
@@ -208,25 +228,107 @@ impl EthClient {
         Ok(())
     }
 
+    /// Wait for at least a given number of given accounts to have enough eth
+    pub async fn wait_for_eth(&self, accounts: &[usize], need: usize) -> Result<(), ClientError> {
+        for idx in accounts {
+            let account = self.accounts[*idx];
+            let bal = self.provider.get_balance(account).await?;
+            let required = self.min_eth.0 - bal;
+            warn!(
+                ?account,
+                balance = format_ether(bal),
+                "Waiting for at least {} ETH",
+                format_ether(required)
+            );
+        }
+
+        let mut have = 0;
+        while have < need {
+            tokio::time::sleep(Duration::from_secs(5 * 60)).await;
+            have = 0;
+            for idx in accounts {
+                if self.provider.get_balance(self.accounts[*idx]).await? >= self.min_eth.0 {
+                    have += 1;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Get accounts above minimum eth balance, or return error if not at least 2
+    async fn get_active_accounts(&self) -> Result<Vec<usize>, ClientError> {
+        let mut active = Vec::new();
+        let mut inactive = Vec::new();
+        for (i, address) in self.accounts.iter().cloned().enumerate() {
+            if self.provider.get_balance(address).await? >= self.min_eth.0 {
+                active.push(i);
+            } else {
+                inactive.push(i);
+            }
+        }
+        if active.len() < 2 {
+            return Err(ClientError::NotEnoughEth(
+                self.min_eth.1,
+                inactive,
+                2 - active.len(),
+            ));
+        }
+        Ok(active)
+    }
+
+    /// Get contract balances
+    async fn token_balances(
+        &self,
+        accounts: &[usize],
+        contract: Address,
+    ) -> Result<Vec<(usize, U256)>, ClientError> {
+        let contract = IERC20::new(contract, &self.provider);
+
+        let mut bals = Vec::new();
+        for idx in accounts {
+            let bal = contract.balanceOf(self.accounts[*idx]).call().await?;
+            bals.push((*idx, bal))
+        }
+
+        Ok(bals)
+    }
+
     /// Select ideal accounts for EOA 1 and 2
     pub async fn select_accounts(&self, signal: Signal) -> Result<[usize; 2], ClientError> {
         if self.accounts.is_empty() {
             return Err(ClientError::ReadOnly);
         }
 
-        let token = IERC20::new(signal.token_contract, &self.provider);
+        let accounts = self.get_active_accounts().await?;
+        let mut balances = self
+            .token_balances(&accounts, signal.token_contract)
+            .await?;
 
-        for account in self.accounts.clone() {
-            let balance = token.balanceOf(account).call().await?;
-            debug!("{account}: {balance}");
-        }
+        // Compute minimum bond amount
+        let bond_amount = signal
+            .reward_amount
+            .checked_mul(U256::from(52))
+            .unwrap()
+            .checked_div(U256::from(100))
+            .unwrap();
 
-        // TODO:
-        //   - Get token balances for each account
-        //   - EOA1 needs at least bond amount, EOA2 needs at least transfer amount
-        //   - Error if we dont have enough balance
+        // find eoa 1; needs enough for bond amount.
+        // should have the least amount of funds for redistribution
+        balances.sort();
+        let eoa_1 = *balances
+            .iter()
+            .find(|(_, bal)| bal >= &bond_amount)
+            .ok_or(ClientError::NotEnoughTokens)?;
 
-        Ok([0, 1])
+        // find eoa 2; needs enough for escrow.
+        // should have the most amount of funds for redistribution
+        balances.reverse();
+        let eoa_2 = *balances
+            .iter()
+            .find(|(i, bal)| i != &eoa_1.0 && bal >= &signal.transfer_amount)
+            .ok_or(ClientError::NotEnoughTokens)?;
+
+        Ok([eoa_1.0, eoa_2.0])
     }
 
     /// Execute a bond call on the escrow contract. Now handles obfuscated contracts.

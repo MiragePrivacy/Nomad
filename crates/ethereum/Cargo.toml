@@ -10,6 +10,7 @@ alloy.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
+tokio.workspace = true
 
 alloy-trie = "0.9.0"
 thiserror = "2.0.14"

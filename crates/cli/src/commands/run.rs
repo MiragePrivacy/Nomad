@@ -2,7 +2,7 @@ use alloy::signers::local::PrivateKeySigner;
 use chrono::Utc;
 use clap::Parser;
 use color_eyre::eyre::{eyre, Result};
-use nomad_ethereum::EthClient;
+use nomad_ethereum::{ClientError, EthClient};
 use nomad_p2p::spawn_p2p;
 use nomad_pool::SignalPool;
 use nomad_rpc::spawn_rpc_server;
@@ -109,8 +109,22 @@ async fn handle_signal(signal: Signal, eth_client: &EthClient, vm_socket: &VmSoc
     // validate contract
     // eth_client.validate_contract(signal, Vec::new());
 
-    // select ideal accounts
-    let [eoa_1, eoa_2] = eth_client.select_accounts(signal.clone()).await?;
+    // select ideal accounts, optionally waiting until we have required eth balances
+    let [eoa_1, eoa_2] = 'inner: loop {
+        match eth_client.select_accounts(signal.clone()).await {
+            Ok(accounts) => break 'inner accounts,
+            // We don't have at least two accounts with enough balance, wait until they are funded
+            Err(e @ ClientError::NotEnoughEth(_, _, _)) => {
+                warn!("{e}");
+                let ClientError::NotEnoughEth(_, accounts, need) = e else {
+                    unreachable!()
+                };
+                eth_client.wait_for_eth(&accounts, need).await?;
+                continue 'inner;
+            }
+            Err(e) => Err(e)?,
+        };
+    };
 
     info!("[1/3] Approving and bonding tokens to escrow");
     let (approve, bond) = eth_client.bond(eoa_1, signal.clone()).await?;
