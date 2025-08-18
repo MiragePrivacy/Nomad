@@ -207,9 +207,16 @@ impl EthClient {
     }
 
     /// Select ideal accounts for EOA 1 and 2
-    pub async fn select_accounts(&self, _signal: Signal) -> Result<[usize; 2], ClientError> {
+    pub async fn select_accounts(&self, signal: Signal) -> Result<[usize; 2], ClientError> {
         if self.accounts.is_empty() {
             return Err(ClientError::ReadOnly);
+        }
+
+        let token = TokenContract::new(signal.token_contract, &self.provider);
+
+        for account in self.accounts.clone() {
+            let balance = token.balanceOf(account).call().await?;
+            debug!("{account}: {balance}");
         }
 
         // TODO:
