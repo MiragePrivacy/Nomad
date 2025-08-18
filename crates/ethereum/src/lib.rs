@@ -6,7 +6,7 @@ use alloy::{
     providers::{
         fillers::{
             BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller,
-            WalletFiller,
+            SimpleNonceManager, WalletFiller,
         },
         Identity, Provider, ProviderBuilder, RootProvider,
     },
@@ -65,10 +65,13 @@ impl Default for EthConfig {
 type BaseProvider = FillProvider<
     JoinFill<
         JoinFill<
-            Identity,
-            JoinFill<GasFiller, JoinFill<BlobGasFiller, JoinFill<NonceFiller, ChainIdFiller>>>,
+            JoinFill<
+                Identity,
+                JoinFill<GasFiller, JoinFill<BlobGasFiller, JoinFill<NonceFiller, ChainIdFiller>>>,
+            >,
+            WalletFiller<EthereumWallet>,
         >,
-        WalletFiller<EthereumWallet>,
+        NonceFiller<SimpleNonceManager>,
     >,
     RootProvider,
 >;
@@ -118,6 +121,7 @@ impl EthClient {
             .collect();
         let provider = ProviderBuilder::new()
             .wallet(wallet)
+            .with_simple_nonce_management()
             .connect(config.rpc.as_str())
             .await?;
         Ok(Self { provider, accounts })
