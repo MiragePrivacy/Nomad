@@ -32,6 +32,7 @@ impl From<SignalArgs> for Signal {
             transfer_amount: val.amount,
             reward_amount: val.reward,
             acknowledgement_url: String::new(),
+            selector_mapping: None,
         }
     }
 }
