@@ -1,6 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Script to run multiple Nomad nodes with the new CLI structure
+# 
+# Usage examples:
+#   ./run_nodes.sh                              # Basic usage
+#   ./run_nodes.sh -vv                          # With verbose logging
+#   ./run_nodes.sh --config /path/to/config     # With custom config
+#   ./run_nodes.sh faucet 0x1234...            # Run faucet on first node only
+#
+# The script now uses CLI argument overrides with the new structure:
+#   nomad [global-args] run [run-args]
+# Where:
+#   global-args: --config, --pk, --verbose
+#   run-args: --http-rpc, --rpc-port, --p2p-port, --peer, --bootstrap
+
 # Error trapping
 trap 'echo "[runner] ERROR: Script failed at line $LINENO. Exit code: $?" >&2' ERR
 
@@ -113,6 +127,26 @@ for i in {1..20}; do  # Check up to 20 sender keys
 done
 
 echo "[runner] found ${#SENDER_KEYS[@]} sender keys for escrow deployment"
+
+# ------------------------------------------------------------
+# Faucet helper function using new CLI
+# ------------------------------------------------------------
+run_nomad_faucet() {
+  local private_key=$1
+  local token_contract=$2
+  local description=$3
+  
+  echo "[runner] Running nomad faucet for $description using contract $token_contract"
+  
+  # Use the new faucet subcommand
+  if $BIN --pk "$private_key" faucet "$token_contract" >/dev/null 2>&1; then
+    echo "[runner] Nomad faucet successful"
+    return 0
+  else
+    echo "[runner] ERROR: Nomad faucet failed"
+    return 1
+  fi
+}
 
 # ------------------------------------------------------------
 # Balance validation functions
@@ -229,6 +263,62 @@ check_balance() {
   return 0
 }
 
+# Validate node key balances
+validate_node_balances() {
+  if [ ${#KEYS[@]} -eq 0 ]; then
+    echo "[runner] WARNING: No node keys found."
+    return 1
+  fi
+  
+  echo "[runner] Checking node key balances..."
+  local insufficient_count=0
+  local faucet_attempts=0
+  
+  for i in "${!KEYS[@]}"; do
+    local key="${KEYS[$i]}"
+    if ! check_balance "$key" "Node key $((i+1))"; then
+      ((insufficient_count++))
+      ((faucet_attempts++))
+    fi
+  done
+  
+  if [ $insufficient_count -gt 0 ]; then
+    echo
+    if [ $faucet_attempts -gt 0 ]; then
+      echo "[runner] $faucet_attempts node key(s) attempted faucet calls"
+      echo "[runner] Re-checking balances after faucet attempts..."
+      
+      # Re-check balances after faucet attempts
+      insufficient_count=0
+      for i in "${!KEYS[@]}"; do
+        local key="${KEYS[$i]}"
+        local address=$(cast wallet address "$key" 2>/dev/null)
+        local raw_token_balance=$(cast call "$TOKEN_CONTRACT" "balanceOf(address)(uint256)" "$address" --rpc-url "$HTTP_RPC" 2>/dev/null || echo "0")
+        local token_balance=$(echo "$raw_token_balance" | awk '{print $1}')
+        local min_tokens="10000000000"
+        
+        if (( token_balance < min_tokens )); then
+          ((insufficient_count++))
+          echo "[runner] Node key $((i+1)) still has insufficient tokens: $token_balance"
+        fi
+      done
+    fi
+    
+    if [ $insufficient_count -gt 0 ]; then
+      echo "[runner] WARNING: $insufficient_count node key(s) still have insufficient balance after faucet attempts"
+      read -p "Continue anyway? (y/N): " continue_choice
+      if [[ ! "$continue_choice" =~ ^[Yy]$ ]]; then
+        echo "[runner] Exiting. Please fund the node keys manually and try again."
+        exit 1
+      fi
+    else
+      echo "[runner] All node keys now have sufficient balance after faucet calls"
+    fi
+  fi
+  
+  return 0
+}
+
 # Validate sender key balances
 validate_sender_balances() {
   if [ ${#SENDER_KEYS[@]} -eq 0 ]; then
@@ -317,8 +407,9 @@ P2P_START_PORT=9000
 # ------------------------------------------------------------
 # 2. Validate balances and compile
 # ------------------------------------------------------------
-# Validate sender balances if TOKEN_CONTRACT and RPC are set
+# Validate balances if TOKEN_CONTRACT and RPC are set
 if [ -n "$TOKEN_CONTRACT" ] && [ -n "$HTTP_RPC" ]; then
+  validate_node_balances
   validate_sender_balances
 elif [ ${#SENDER_KEYS[@]} -gt 0 ]; then
   echo "[runner] WARNING: Found sender keys but missing TOKEN_CONTRACT or RPC in .env"
@@ -372,7 +463,7 @@ if [ ${#SENDER_KEYS[@]} -gt 0 ]; then
 fi
 
 cargo build --release
-BIN="./target/release/nomad run"
+BIN="./target/release/nomad"
 
 # ------------------------------------------------------------
 # 3. Launch nodes sequentially with random peer connections
@@ -386,7 +477,8 @@ RPC_PORT_1=$((RPC_START_PORT))
 P2P_PORT_1=$((P2P_START_PORT))
 LOG1=$(mktemp)
 
-NODE1_CMD="$BIN --http-rpc $HTTP_RPC --rpc-port $RPC_PORT_1 --p2p-port $P2P_PORT_1"
+# Build Node 1 command with CLI overrides
+NODE1_CMD="$BIN"
 
 # Node 1 gets keys if it's a write node (node number <= WRITE_NODES)
 if [ 1 -le "$WRITE_NODES" ]; then
@@ -398,12 +490,15 @@ else
   echo "[runner] Node 1: RPC port $RPC_PORT_1, P2P port $P2P_PORT_1 (read node, no keys)"
 fi
 
-# Add extra arguments to Node 1 command (including faucet if specified)
+# Add extra arguments (these will be passed to the run subcommand)
 if [ -n "$EXTRA_ARGS" ]; then
   NODE1_CMD="$NODE1_CMD $EXTRA_ARGS"
 fi
 
-setsid stdbuf -oL env RUST_LOG=nomad=debug $NODE1_CMD \
+# Add run subcommand with CLI overrides
+NODE1_CMD="$NODE1_CMD run --http-rpc $HTTP_RPC --rpc-port $RPC_PORT_1 --p2p-port $P2P_PORT_1"
+
+setsid stdbuf -oL env $NODE1_CMD \
   > >(tee "$LOG1" | sed -u "s/^/\x1b[${colors[0]}mNode 1:\x1b[0m /") 2>&1 &
 PIDS[1]=$!
 RPC_PORTS[1]=$RPC_PORT_1
@@ -430,8 +525,8 @@ for ((i=2; i<=NODE_COUNT; i++)); do
   peer_idx=$((1 + RANDOM % (i - 1)))
   PEER_ADDR="${NODE_ADDRS[$peer_idx]}"
   
-  # Build command with peer connection
-  NODE_CMD="$BIN --http-rpc $HTTP_RPC --rpc-port $RPC_PORT --p2p-port $P2P_PORT $PEER_ADDR"
+  # Build command with CLI args
+  NODE_CMD="$BIN"
   
   # This node gets keys if it's a write node (node number <= WRITE_NODES)
   if [ $i -le "$WRITE_NODES" ]; then
@@ -443,19 +538,22 @@ for ((i=2; i<=NODE_COUNT; i++)); do
     echo "[runner] Node $i: RPC port $RPC_PORT, P2P port $P2P_PORT, connecting to Node $peer_idx (read node, no keys)"
   fi
   
-  # Add extra arguments but exclude --faucet to prevent double execution
+  # Add extra arguments (filtered to remove faucet commands for subsequent nodes)
   if [ -n "$EXTRA_ARGS" ]; then
-    # Remove --faucet from extra args for nodes after the first
-    FILTERED_ARGS=$(echo "$EXTRA_ARGS" | sed 's/--faucet [^ ]*//')
+    # Remove any faucet subcommands from extra args for nodes after the first
+    FILTERED_ARGS=$(echo "$EXTRA_ARGS" | sed 's/faucet [^ ]*//' | sed 's/--verbose/-v/g')
     if [ -n "$FILTERED_ARGS" ]; then
       NODE_CMD="$NODE_CMD $FILTERED_ARGS"
     fi
   fi
   
+  # Add run subcommand with CLI overrides
+  NODE_CMD="$NODE_CMD run --http-rpc $HTTP_RPC --rpc-port $RPC_PORT --p2p-port $P2P_PORT --peer $PEER_ADDR"
+  
   # Create log file for this node to capture its address
   LOG_FILE=$(mktemp)
   
-  setsid stdbuf -oL env RUST_LOG=nomad=debug $NODE_CMD \
+  setsid stdbuf -oL env $NODE_CMD \
     > >(tee "$LOG_FILE" | sed -u "s/^/\x1b[${colors[$color_idx]}mNode $i:\x1b[0m /") 2>&1 &
   PIDS[$i]=$!
   RPC_PORTS[$i]=$RPC_PORT
