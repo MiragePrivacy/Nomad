@@ -29,6 +29,7 @@ sol! {
     #[sol(rpc)]
     contract IERC20 {
         event Transfer(address indexed from, address indexed to, uint256 value);
+
         function balanceOf(address) public view returns (uint256);
         function mint() external;
         function transfer(address to, uint256 value) external returns (bool);
@@ -37,8 +38,21 @@ sol! {
 
     #[sol(rpc)]
     contract Escrow {
+        struct ReceiptProof {
+            /// RLP-encoded block header
+            bytes header;
+            /// RLP-encoded target receipt
+            bytes receipt;
+            /// Serialized MPT proof nodes
+            bytes proof;
+            /// RLP-encoded receipt index
+            bytes path;
+            /// Index of target log in receipt
+            uint256 log;
+        }
+
         function bond(uint256 _bondAmount) public;
-        function collect() public;
+        function collect(ReceiptProof calldata proof, uint256 targetBlockNumber) public;
         function is_bonded() public view returns (bool);
     }
 }
@@ -422,7 +436,7 @@ impl EthClient {
         &self,
         eoa_2: usize,
         signal: Signal,
-    ) -> Result<(TransactionReceipt, proof::ProofBlob), ClientError> {
+    ) -> Result<TransactionReceipt, ClientError> {
         let receipt = IERC20::new(signal.token_contract, &self.provider)
             .transfer(signal.recipient, signal.transfer_amount)
             .from(self.accounts[eoa_2])
@@ -430,8 +444,7 @@ impl EthClient {
             .await?
             .get_receipt()
             .await?;
-        let proof = self.generate_proof(&signal, &receipt).await?;
-        Ok((receipt, proof))
+        Ok(receipt)
     }
 
     /// Collect a reward by submitting proof for a signal
@@ -439,7 +452,8 @@ impl EthClient {
         &self,
         eoa_1: usize,
         signal: Signal,
-        _proof: proof::ProofBlob,
+        proof: Escrow::ReceiptProof,
+        block: u64,
     ) -> Result<TransactionReceipt, ClientError> {
         if let Some(ref selector_mapping) = signal.selector_mapping {
             // Obfuscated contract - use raw call with obfuscated selector
@@ -467,9 +481,8 @@ impl EthClient {
         }
 
         // Standard contract call for non-obfuscated contracts
-        // TODO: actually send proof
         let receipt = Escrow::new(signal.escrow_contract, &self.provider)
-            .collect()
+            .collect(proof, U256::from(block))
             .from(self.accounts[eoa_1])
             .send()
             .await?

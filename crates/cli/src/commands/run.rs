@@ -93,23 +93,22 @@ impl RunArgs {
 async fn handle_signal(signal: Signal, eth_client: &EthClient, vm_socket: &VmSocket) -> Result<()> {
     let start_time = Utc::now().to_rfc3339();
 
+    info!("[1/9] Executing puzzle in vm");
     // TODO: Include the puzzle bytes in the signal payload
-    info!("[0/3] Executing puzzle in vm");
     let puzzle = Vec::new();
     let _k2 = vm_socket
         .run(puzzle)
         .await
         .map_err(|_| eyre!("failed to execute puzzle"))?;
 
-    // TODO:
-    //   - get k1 from relayer
-    //   - decrypt signal
-    //   - re-obfuscate contract for validation
+    info!("[2/9] TODO: Getting k1 from relayer");
 
-    // validate contract
+    info!("[3/9] TODO: Decrypting signal payload");
+
+    info!("[4/9] TODO: Validating escrow contract");
     // eth_client.validate_contract(signal, Vec::new());
 
-    // select ideal accounts, optionally waiting until we have required eth balances
+    info!("[5/9] Selecting active accounts");
     let [eoa_1, eoa_2] = 'inner: loop {
         match eth_client.select_accounts(signal.clone()).await {
             Ok(accounts) => break 'inner accounts,
@@ -126,14 +125,19 @@ async fn handle_signal(signal: Signal, eth_client: &EthClient, vm_socket: &VmSoc
         };
     };
 
-    info!("[1/3] Approving and bonding tokens to escrow");
+    info!("[6/9] Approving and bonding tokens to escrow");
     let (approve, bond) = eth_client.bond(eoa_1, signal.clone()).await?;
 
-    info!("[2/3] Transferring tokens to recipient");
-    let (transfer, proof) = eth_client.transfer(eoa_2, signal.clone()).await?;
+    info!("[7/9] Transferring tokens to recipient");
+    let transfer = eth_client.transfer(eoa_2, signal.clone()).await?;
 
-    info!("[3/3] Collecting rewards from escrow");
-    let collect = eth_client.collect(eoa_1, signal.clone(), proof).await?;
+    info!("[8/9] Generating transfer proof");
+    let proof = eth_client.generate_proof(&signal, &transfer).await?;
+
+    info!("[9/9] Collecting rewards from escrow");
+    let collect = eth_client
+        .collect(eoa_1, signal.clone(), proof, transfer.block_number.unwrap())
+        .await?;
 
     // Send receipt to client
     let client = reqwest::Client::new();

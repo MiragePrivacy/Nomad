@@ -1,17 +1,17 @@
 use alloy::{
     consensus::{Receipt, ReceiptEnvelope, ReceiptWithBloom, TxType},
     eips::Encodable2718 as _,
-    primitives::{Bytes, Log},
+    primitives::{Bytes, Log, U256},
     providers::Provider,
     rlp::{BufMut, Encodable},
     rpc::types::TransactionReceipt,
 };
 use alloy_trie::{proof::ProofRetainer, root::adjust_index_for_rlp, HashBuilder, Nibbles};
-use nomad_types::Signal;
-use serde::{Deserialize, Serialize};
 use tracing::{instrument, trace};
 
-use crate::{ClientError, EthClient, IERC20};
+use nomad_types::Signal;
+
+use crate::{ClientError, Escrow, EthClient, IERC20};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProofError {
@@ -21,36 +21,26 @@ pub enum ProofError {
     LogIndexOutOfBounds,
     #[error("Log mismatched")]
     LogMismatch,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProofBlob {
-    /// RLP-encoded block header
-    pub block_header: Bytes,
-    /// The transaction receipt
-    pub receipt: Bytes,
-    /// Minimal MPT proof nodes linking receipt to receiptsRoot
-    pub proof_nodes: Bytes,
-    // RLP-encoded transaction index
-    pub receipt_path: Bytes,
-    /// The specific log if log_index was provided
-    pub target_log: Log,
+    #[error("Decoding error")]
+    Decoding,
+    #[error("Invalid root")]
+    InvalidRoot,
 }
 
 impl EthClient {
     /// Creates a new `ProofInput` with the given block hash, transaction index, and optional log index.
     #[instrument(skip_all, fields(tx = ?receipt.transaction_hash))]
-    pub(crate) async fn generate_proof(
+    pub async fn generate_proof(
         &self,
         signal: &Signal,
         receipt: &TransactionReceipt,
-    ) -> Result<ProofBlob, ClientError> {
+    ) -> Result<Escrow::ReceiptProof, ClientError> {
         // Locate signal transfer event in the receipt logs
         let mut target_log = None;
         for raw_log in receipt.logs() {
             let log = raw_log
                 .log_decode::<IERC20::Transfer>()
-                .map_err(|_| ProofError::LogMismatch)?;
+                .map_err(|_| ProofError::Decoding)?;
             let data = log.data();
             if log.address() == signal.token_contract
                 && data.to == signal.recipient
@@ -66,11 +56,11 @@ impl EthClient {
             return Err(ProofError::LogMismatch.into());
         };
 
+        // Get the block, build receipts trie
         let block_hash = receipt.block_hash.unwrap();
         let Some(block) = self.provider.get_block_by_hash(block_hash).await? else {
             return Err(ProofError::TransactionNotFound.into());
         };
-
         let Some(receipts) = self.provider.get_block_receipts(block_hash.into()).await? else {
             return Err(ProofError::TransactionNotFound.into());
         };
@@ -108,15 +98,16 @@ impl EthClient {
                 rlp.encode_2718(buf)
             });
 
-        let tx_index = receipt.transaction_index.unwrap();
-
         //check receipts root is correct
         let root = list.root();
-        assert_eq!(block.header.receipts_root, root, "Receipts root mismatch");
+        if block.header.receipts_root != root {
+            return Err(ProofError::InvalidRoot.into());
+        }
+
         // Extract the proof nodes for the target receipt
         let proof_nodes = list.take_proof_nodes().clone();
         // Get the target receipt that we're proving inclusion for
-        let target_receipt = &ordered_receipts[tx_index as usize];
+        let target_receipt = &ordered_receipts[receipt.transaction_index.unwrap() as usize];
         // Encode the target receipt for inclusion in proof
         let mut receipt_encoded = Vec::new();
         target_receipt.encode_2718(&mut receipt_encoded);
@@ -126,7 +117,6 @@ impl EthClient {
             return Err(ProofError::LogIndexOutOfBounds.into());
         }
         let proof_target_log = target_receipt.logs()[log_idx as usize].clone();
-
         // Ensure the target_log from RPC receipt matches the one from consensus receipt
         if target_log.address() != proof_target_log.address
             || target_log.data() != &proof_target_log.data
@@ -144,22 +134,28 @@ impl EthClient {
 
         // Encode receipt path
         let mut path_buffer = Vec::new();
-        let adjusted_index = adjust_index_for_rlp(tx_index as usize, ordered_receipts.len());
+        let adjusted_index = adjust_index_for_rlp(
+            receipt.transaction_index.unwrap() as usize,
+            ordered_receipts.len(),
+        );
         adjusted_index.encode(&mut path_buffer);
 
-        let proof = ProofBlob {
-            block_header: Bytes::from(block_header_encoded),
+        let proof = Escrow::ReceiptProof {
+            header: Bytes::from(block_header_encoded),
             receipt: Bytes::from(receipt_encoded),
-            proof_nodes: Bytes::from(proof_nodes_bytes),
-            receipt_path: Bytes::from(path_buffer),
-            target_log: proof_target_log,
+            proof: Bytes::from(proof_nodes_bytes),
+            path: Bytes::from(path_buffer),
+            log: U256::from(log_idx),
         };
 
-        let total = proof.block_header.len()
-            + proof.receipt.len()
-            + proof.proof_nodes.len()
-            + proof.receipt_path.len();
-        trace!("Generated {total} byte proof");
+        trace!(
+            size = proof.header.len()
+                + proof.receipt.len()
+                + proof.proof.len()
+                + proof.path.len()
+                + 32,
+            "Generated proof"
+        );
 
         Ok(proof)
     }
