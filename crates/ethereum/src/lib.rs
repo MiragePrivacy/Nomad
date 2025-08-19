@@ -7,10 +7,7 @@ use alloy::{
         Address, U256,
     },
     providers::{
-        fillers::{
-            BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller,
-            SimpleNonceManager, WalletFiller,
-        },
+        fillers::{BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller},
         Identity, Provider, ProviderBuilder, RootProvider,
     },
     rpc::types::TransactionReceipt,
@@ -20,7 +17,7 @@ use alloy::{
 };
 use nomad_types::{ObfuscatedCaller, Signal};
 use serde::{Deserialize, Serialize};
-use tracing::{debug, info, warn};
+use tracing::{debug, field::Empty, info, instrument, warn, Span};
 use url::Url;
 
 mod proof;
@@ -84,22 +81,18 @@ impl Default for EthConfig {
     }
 }
 
-type BaseProvider = FillProvider<
+type ReadProvider = FillProvider<
     JoinFill<
-        JoinFill<
-            JoinFill<
-                Identity,
-                JoinFill<GasFiller, JoinFill<BlobGasFiller, JoinFill<NonceFiller, ChainIdFiller>>>,
-            >,
-            WalletFiller<EthereumWallet>,
-        >,
-        NonceFiller<SimpleNonceManager>,
+        Identity,
+        JoinFill<GasFiller, JoinFill<BlobGasFiller, JoinFill<NonceFiller, ChainIdFiller>>>,
     >,
     RootProvider,
 >;
 
 pub struct EthClient {
-    provider: BaseProvider,
+    read_provider: ReadProvider,
+    rpc: String,
+    wallet: EthereumWallet,
     accounts: Vec<Address>,
     min_eth: (U256, f64),
 }
@@ -146,26 +139,41 @@ impl EthClient {
                 address
             })
             .collect();
-        let provider = ProviderBuilder::new()
-            .wallet(wallet)
-            .with_simple_nonce_management()
-            .connect(config.rpc.as_str())
-            .await?;
+
         let min_eth = (
             parse_ether(&config.min_eth.to_string()).unwrap(),
             config.min_eth,
         );
 
+        let rpc = config.rpc.to_string();
+        let read_provider = ProviderBuilder::new().connect(&rpc).await?;
+
         Ok(Self {
-            provider,
+            read_provider,
+            rpc,
+            wallet,
             accounts,
             min_eth,
         })
     }
 
+    /// Get a provider for the current wallets
+    pub async fn wallet_provider(&self) -> Result<impl Provider, ClientError> {
+        let provider = ProviderBuilder::new()
+            .wallet(self.wallet.clone())
+            .with_simple_nonce_management()
+            .connect(&self.rpc)
+            .await?;
+        Ok(provider)
+    }
+
     /// Faucet tokens from a given contract into each ethereum account
-    pub async fn faucet(&self, contract: Address) -> Result<(), ClientError> {
-        let token = IERC20::new(contract, &self.provider);
+    pub async fn faucet(
+        &self,
+        provider: impl Provider,
+        contract: Address,
+    ) -> Result<(), ClientError> {
+        let token = IERC20::new(contract, provider);
 
         // Execute mint transactions and add their futures to the set
         let mut futs = Vec::new();
@@ -186,6 +194,7 @@ impl EthClient {
     /// Validate the escrow contract for a given signal. Checks:
     /// - bytecode on-chain should match expected obfuscation output
     /// - escrow contract is not bonded yet
+    #[instrument(skip_all)]
     pub async fn validate_contract(
         &self,
         signal: Signal,
@@ -211,7 +220,7 @@ impl EthClient {
                 .map_err(ClientError::ObfuscatedContractCall)?;
 
             let result = self
-                .provider
+                .read_provider
                 .call(alloy::rpc::types::TransactionRequest {
                     to: Some(alloy::primitives::TxKind::Call(signal.escrow_contract)),
                     input: call_data.into(),
@@ -228,13 +237,16 @@ impl EthClient {
         }
 
         // Standard validation for non-obfuscated contracts
-        let bytecode = self.provider.get_code_at(signal.escrow_contract).await?;
+        let bytecode = self
+            .read_provider
+            .get_code_at(signal.escrow_contract)
+            .await?;
         if bytecode != expected_bytecode {
             return Err(ClientError::InvalidBytecode);
         }
 
         // Ensure escrow contract is not bonded yet
-        let escrow = Escrow::new(signal.escrow_contract, &self.provider);
+        let escrow = Escrow::new(signal.escrow_contract, &self.read_provider);
         if escrow.is_bonded().call().await? {
             return Err(ClientError::AlreadyBonded);
         }
@@ -243,10 +255,11 @@ impl EthClient {
     }
 
     /// Wait for at least a given number of given accounts to have enough eth
+    #[instrument(skip_all)]
     pub async fn wait_for_eth(&self, accounts: &[usize], need: usize) -> Result<(), ClientError> {
         for idx in accounts {
             let account = self.accounts[*idx];
-            let bal = self.provider.get_balance(account).await?;
+            let bal = self.read_provider.get_balance(account).await?;
             let required = self.min_eth.0 - bal;
             warn!(
                 ?account,
@@ -261,7 +274,7 @@ impl EthClient {
             tokio::time::sleep(Duration::from_secs(5 * 60)).await;
             have = 0;
             for idx in accounts {
-                if self.provider.get_balance(self.accounts[*idx]).await? >= self.min_eth.0 {
+                if self.read_provider.get_balance(self.accounts[*idx]).await? >= self.min_eth.0 {
                     have += 1;
                 }
             }
@@ -270,11 +283,12 @@ impl EthClient {
     }
 
     /// Get accounts above minimum eth balance, or return error if not at least 2
+    #[instrument(skip_all)]
     async fn get_active_accounts(&self) -> Result<Vec<usize>, ClientError> {
         let mut active = Vec::new();
         let mut inactive = Vec::new();
         for (i, address) in self.accounts.iter().cloned().enumerate() {
-            if self.provider.get_balance(address).await? >= self.min_eth.0 {
+            if self.read_provider.get_balance(address).await? >= self.min_eth.0 {
                 active.push(i);
             } else {
                 inactive.push(i);
@@ -291,12 +305,13 @@ impl EthClient {
     }
 
     /// Get contract balances
+    #[instrument(skip_all, fields(?accounts))]
     async fn token_balances(
         &self,
         accounts: &[usize],
         contract: Address,
     ) -> Result<Vec<(usize, U256)>, ClientError> {
-        let contract = IERC20::new(contract, &self.provider);
+        let contract = IERC20::new(contract, &self.read_provider);
 
         let mut bals = Vec::new();
         for idx in accounts {
@@ -308,6 +323,7 @@ impl EthClient {
     }
 
     /// Select ideal accounts for EOA 1 and 2
+    #[instrument(skip_all)]
     pub async fn select_accounts(&self, signal: Signal) -> Result<[usize; 2], ClientError> {
         if self.accounts.is_empty() {
             return Err(ClientError::ReadOnly);
@@ -346,11 +362,14 @@ impl EthClient {
     }
 
     /// Execute a bond call on the escrow contract. Now handles obfuscated contracts.
+    #[instrument(skip_all, fields(eoa_1 = ?self.accounts[eoa_1], tx_approve = Empty, tx_bond = Empty))]
     pub async fn bond(
         &self,
+        provider: impl Provider,
         eoa_1: usize,
         signal: Signal,
-    ) -> Result<(TransactionReceipt, TransactionReceipt), ClientError> {
+    ) -> Result<[TransactionReceipt; 2], ClientError> {
+        let span = Span::current();
         // Compute minimum bond amount
         let bond_amount = signal
             .reward_amount
@@ -360,13 +379,14 @@ impl EthClient {
             .unwrap();
 
         // Approve bond amount for escrow contract, on the token contract (always the same)
-        let approve = IERC20::new(signal.token_contract, &self.provider)
+        let approve = IERC20::new(signal.token_contract, &provider)
             .approve(signal.escrow_contract, bond_amount)
             .from(self.accounts[eoa_1])
             .send()
             .await?
             .get_receipt()
             .await?;
+        span.record("tx_approve", approve.transaction_hash.to_string());
 
         // Try to bond
         let bond_result = if let Some(ref selector_mapping) = signal.selector_mapping {
@@ -378,7 +398,7 @@ impl EthClient {
                 .bond_call_data(bond_amount)
                 .map_err(ClientError::ObfuscatedContractCall)?;
 
-            self.provider
+            provider
                 .send_transaction(alloy::rpc::types::TransactionRequest {
                     to: Some(alloy::primitives::TxKind::Call(signal.escrow_contract)),
                     input: call_data.into(),
@@ -390,7 +410,7 @@ impl EthClient {
                 .await
         } else {
             // Standard contract call for non-obfuscated contracts
-            let escrow = Escrow::new(signal.escrow_contract, &self.provider);
+            let escrow = Escrow::new(signal.escrow_contract, &provider);
 
             // Double check escrow contract is not bonded yet
             if escrow.is_bonded().call().await? {
@@ -410,8 +430,9 @@ impl EthClient {
         // If bond failed, revert approval to prevent stuck approvals
         match bond_result {
             Ok(bond_receipt) => {
+                span.record("tx_bond", bond_receipt.transaction_hash.to_string());
                 info!("Successfully bonded to escrow");
-                Ok((approve, bond_receipt))
+                Ok([approve, bond_receipt])
             }
             Err(e) => {
                 warn!(
@@ -420,7 +441,7 @@ impl EthClient {
                 );
 
                 // Reset approval to 0
-                let _ = IERC20::new(signal.token_contract, &self.provider)
+                let _ = IERC20::new(signal.token_contract, provider)
                     .approve(signal.escrow_contract, U256::ZERO)
                     .from(self.accounts[eoa_1])
                     .send()
@@ -432,29 +453,35 @@ impl EthClient {
     }
 
     /// Construct and execute a transfer call from the signal
+    #[instrument(skip_all, fields(eoa_2 = ?self.accounts[eoa_2], tx_transfer = Empty))]
     pub async fn transfer(
         &self,
+        provider: impl Provider,
         eoa_2: usize,
         signal: Signal,
     ) -> Result<TransactionReceipt, ClientError> {
-        let receipt = IERC20::new(signal.token_contract, &self.provider)
+        let receipt = IERC20::new(signal.token_contract, provider)
             .transfer(signal.recipient, signal.transfer_amount)
             .from(self.accounts[eoa_2])
             .send()
             .await?
             .get_receipt()
             .await?;
+        Span::current().record("tx_transfer", receipt.transaction_hash.to_string());
         Ok(receipt)
     }
 
     /// Collect a reward by submitting proof for a signal
+    #[instrument(skip_all, fields(eoa_1 = ?self.accounts[eoa_1], tx_collect = Empty))]
     pub async fn collect(
         &self,
+        provider: impl Provider,
         eoa_1: usize,
         signal: Signal,
         proof: Escrow::ReceiptProof,
         block: u64,
     ) -> Result<TransactionReceipt, ClientError> {
+        let span = Span::current();
         if let Some(ref selector_mapping) = signal.selector_mapping {
             // Obfuscated contract - use raw call with obfuscated selector
             info!("Collecting from obfuscated escrow contract");
@@ -464,8 +491,7 @@ impl EthClient {
                 .collect_call_data()
                 .map_err(ClientError::ObfuscatedContractCall)?;
 
-            let receipt = self
-                .provider
+            let receipt = provider
                 .send_transaction(alloy::rpc::types::TransactionRequest {
                     to: Some(alloy::primitives::TxKind::Call(signal.escrow_contract)),
                     input: call_data.into(),
@@ -475,19 +501,22 @@ impl EthClient {
                 .await?
                 .get_receipt()
                 .await?;
+            span.record("tx_collect", receipt.transaction_hash.to_string());
 
             info!("Successfully collected from obfuscated escrow");
             return Ok(receipt);
         }
 
         // Standard contract call for non-obfuscated contracts
-        let receipt = Escrow::new(signal.escrow_contract, &self.provider)
+        let receipt = Escrow::new(signal.escrow_contract, provider)
             .collect(proof, U256::from(block))
             .from(self.accounts[eoa_1])
             .send()
             .await?
             .get_receipt()
             .await?;
+        span.record("tx_collect", receipt.transaction_hash.to_string());
+        info!("Successfully collected from escrow");
 
         Ok(receipt)
     }

@@ -31,9 +31,9 @@ struct MirageServer {
 
 #[async_trait]
 impl MirageRpcServer for MirageServer {
-    #[instrument(skip(self))]
+    #[instrument(skip(self), name = "rpc:signal")]
     async fn signal(&self, message: Signal) -> Result<String, ErrorObjectOwned> {
-        info!("Received RPC signal");
+        info!("Received");
         if self.signal_tx.send(message.clone()).is_err() {
             return Err(ErrorObjectOwned::owned(
                 500,

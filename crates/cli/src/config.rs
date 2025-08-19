@@ -1,6 +1,7 @@
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf};
 
 use color_eyre::{eyre::bail, Result};
+use reqwest::Url;
 use resolve_path::PathResolveExt;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
@@ -16,6 +17,29 @@ pub struct Config {
     pub eth: EthConfig,
     pub rpc: RpcConfig,
     pub p2p: P2pConfig,
+    pub otlp: OtlpConfig,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(default)]
+pub struct OtlpConfig {
+    pub url: Option<Url>,
+    pub headers: HashMap<String, String>,
+    pub logs: bool,
+    pub traces: bool,
+    pub metrics: bool,
+}
+
+impl Default for OtlpConfig {
+    fn default() -> Self {
+        Self {
+            url: None,
+            headers: HashMap::new(),
+            logs: true,
+            traces: true,
+            metrics: true,
+        }
+    }
 }
 
 impl Config {

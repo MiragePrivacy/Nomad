@@ -29,16 +29,6 @@ impl Hash for Signal {
     }
 }
 
-#[derive(Deserialize, Serialize, Clone)]
-pub struct ReceiptFormat {
-    pub start_time: String,
-    pub end_time: String,
-    pub bond_transaction_hash: String,
-    pub approval_transaction_hash: String,
-    pub transfer_transaction_hash: String,
-    pub collection_transaction_hash: String,
-}
-
 impl std::fmt::Display for Signal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -52,9 +42,20 @@ impl std::fmt::Display for Signal {
 impl std::fmt::Debug for Signal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Signal")
-            .field("Token", &self.token_contract)
-            .field("Amount", &self.transfer_amount)
-            .field("Reward", &self.reward_amount)
+            .field("token", &self.token_contract)
+            .field("escrow", &self.escrow_contract)
+            .field("amount", &self.transfer_amount)
+            .field("reward", &self.reward_amount)
             .finish()
     }
+}
+
+#[derive(Deserialize, Serialize, Clone, Debug)]
+pub struct ReceiptFormat {
+    pub start_time: String,
+    pub end_time: String,
+    pub bond_transaction_hash: String,
+    pub approval_transaction_hash: String,
+    pub transfer_transaction_hash: String,
+    pub collection_transaction_hash: String,
 }

@@ -13,9 +13,9 @@ mod signal;
 pub struct RpcArgs {
     /// RPC URL for a nomad instance. Defaults to the local node's configured rpc server.
     #[arg(short, long, global = true)]
-    url: Option<Url>,
+    pub url: Option<Url>,
     #[command(subcommand)]
-    cmd: RpcCommand,
+    pub cmd: RpcCommand,
 }
 
 #[derive(Subcommand)]

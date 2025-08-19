@@ -29,7 +29,11 @@ pub enum ProofError {
 
 impl EthClient {
     /// Creates a new `ProofInput` with the given block hash, transaction index, and optional log index.
-    #[instrument(skip_all, fields(tx = ?receipt.transaction_hash))]
+    #[instrument(skip_all, fields(
+        block_num = ?receipt.block_number.unwrap(),
+        block_hash = ?receipt.block_hash.unwrap(),
+        tx = ?receipt.transaction_hash
+    ))]
     pub async fn generate_proof(
         &self,
         signal: &Signal,
@@ -58,10 +62,18 @@ impl EthClient {
 
         // Get the block, build receipts trie
         let block_hash = receipt.block_hash.unwrap();
-        let Some(block) = self.provider.get_block_by_hash(block_hash).await? else {
+        let Some(block) = self.read_provider.get_block_by_hash(block_hash).await? else {
             return Err(ProofError::TransactionNotFound.into());
         };
-        let Some(receipts) = self.provider.get_block_receipts(block_hash.into()).await? else {
+
+        // RLP encode the block header
+        let mut block_header_encoded = Vec::new();
+        block.header.encode(&mut block_header_encoded);
+        let Some(receipts) = self
+            .read_provider
+            .get_block_receipts(block_hash.into())
+            .await?
+        else {
             return Err(ProofError::TransactionNotFound.into());
         };
         let ordered_receipts = receipts
@@ -106,8 +118,15 @@ impl EthClient {
 
         // Extract the proof nodes for the target receipt
         let proof_nodes = list.take_proof_nodes().clone();
+        // Convert proof nodes to Bytes(u8)
+        let proof_nodes_bytes = proof_nodes.iter().fold(Vec::new(), |mut acc, (_, node)| {
+            acc.extend_from_slice(node);
+            acc
+        });
+
         // Get the target receipt that we're proving inclusion for
-        let target_receipt = &ordered_receipts[receipt.transaction_index.unwrap() as usize];
+        let tx_index = receipt.transaction_index.unwrap();
+        let target_receipt = &ordered_receipts[tx_index as usize];
         // Encode the target receipt for inclusion in proof
         let mut receipt_encoded = Vec::new();
         target_receipt.encode_2718(&mut receipt_encoded);
@@ -123,14 +142,6 @@ impl EthClient {
         {
             return Err(ProofError::LogMismatch.into());
         }
-
-        // RLP encode the block header
-        let mut block_header_encoded = Vec::new();
-        block.header.encode(&mut block_header_encoded); // Convert proof nodes to Bytes(u8)
-        let proof_nodes_bytes = proof_nodes.iter().fold(Vec::new(), |mut acc, (_, node)| {
-            acc.extend_from_slice(node);
-            acc
-        });
 
         // Encode receipt path
         let mut path_buffer = Vec::new();
@@ -149,12 +160,8 @@ impl EthClient {
         };
 
         trace!(
-            size = proof.header.len()
-                + proof.receipt.len()
-                + proof.proof.len()
-                + proof.path.len()
-                + 32,
-            "Generated proof"
+            "Generated {} byte proof",
+            proof.header.len() + proof.receipt.len() + proof.proof.len() + proof.path.len()
         );
 
         Ok(proof)

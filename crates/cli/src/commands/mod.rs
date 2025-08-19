@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use alloy::signers::local::PrivateKeySigner;
 use clap::Subcommand;
 use color_eyre::Result;
@@ -18,15 +20,29 @@ pub enum Command {
     Faucet(Box<faucet::FaucetArgs>),
 }
 
+impl Display for Command {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Command::Run(_) => f.write_str("run"),
+            Command::Rpc(args) => {
+                f.write_str("rpc_")?;
+                match args.cmd {
+                    rpc::RpcCommand::Signal(_) => f.write_str("signal")?,
+                }
+                Ok(())
+            }
+            Command::Faucet(_) => f.write_str("faucet"),
+        }
+    }
+}
+
 impl Command {
     /// Run the given command
-    pub fn execute(self, config: Config, signers: Vec<PrivateKeySigner>) -> Result<()> {
-        tokio::runtime::Runtime::new()?.block_on(async move {
-            match self {
-                Command::Run(args) => args.execute(config, signers).await,
-                Command::Rpc(args) => args.execute(config, signers).await,
-                Command::Faucet(args) => args.execute(config, signers).await,
-            }
-        })
+    pub async fn execute(self, config: Config, signers: Vec<PrivateKeySigner>) -> Result<()> {
+        match self {
+            Command::Run(args) => args.execute(config, signers).await,
+            Command::Rpc(args) => args.execute(config, signers).await,
+            Command::Faucet(args) => args.execute(config, signers).await,
+        }
     }
 }

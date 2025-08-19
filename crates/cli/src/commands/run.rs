@@ -2,15 +2,16 @@ use alloy::signers::local::PrivateKeySigner;
 use chrono::Utc;
 use clap::Parser;
 use color_eyre::eyre::{eyre, Result};
+use reqwest::Url;
+use tokio::sync::mpsc::unbounded_channel;
+use tracing::{info, instrument, warn, Level, Span};
+
 use nomad_ethereum::{ClientError, EthClient};
 use nomad_p2p::spawn_p2p;
 use nomad_pool::SignalPool;
 use nomad_rpc::spawn_rpc_server;
 use nomad_types::{ReceiptFormat, Signal};
 use nomad_vm::{NomadVm, VmSocket};
-use reqwest::Url;
-use tokio::sync::mpsc::unbounded_channel;
-use tracing::{info, warn};
 
 use crate::config::Config;
 
@@ -82,22 +83,26 @@ impl RunArgs {
         // Main event loop
         loop {
             let signal = signal_pool.sample().await;
-            if let Err(e) = handle_signal(signal, &eth_client, &vm_socket).await {
-                warn!("failed to handle signal: {e:?}");
-            }
+            let _ = process(signal, &eth_client, &vm_socket).await;
         }
     }
 }
 
 /// Process signals sampled from the pool
-async fn handle_signal(signal: Signal, eth_client: &EthClient, vm_socket: &VmSocket) -> Result<()> {
+#[instrument(skip_all, err(Debug, level = Level::WARN))]
+async fn process(signal: Signal, eth_client: &EthClient, vm_socket: &VmSocket) -> Result<()> {
     let start_time = Utc::now().to_rfc3339();
+
+    // Due to https://github.com/alloy-rs/alloy/issues/1318 continuing to poll in the
+    // background, the provider holds onto the span and prevents sending to telemetry.
+    // As a workaround, we only create a wallet provider while it's needed.
+    let provider = eth_client.wallet_provider().await?;
 
     info!("[1/9] Executing puzzle in vm");
     // TODO: Include the puzzle bytes in the signal payload
     let puzzle = Vec::new();
     let _k2 = vm_socket
-        .run(puzzle)
+        .run((puzzle, Span::current()))
         .await
         .map_err(|_| eyre!("failed to execute puzzle"))?;
 
@@ -126,51 +131,54 @@ async fn handle_signal(signal: Signal, eth_client: &EthClient, vm_socket: &VmSoc
     };
 
     info!("[6/9] Approving and bonding tokens to escrow");
-    let (approve, bond) = eth_client.bond(eoa_1, signal.clone()).await?;
+    let [approve, bond] = eth_client.bond(&provider, eoa_1, signal.clone()).await?;
 
     info!("[7/9] Transferring tokens to recipient");
-    let transfer = eth_client.transfer(eoa_2, signal.clone()).await?;
+    let transfer = eth_client
+        .transfer(&provider, eoa_2, signal.clone())
+        .await?;
 
     info!("[8/9] Generating transfer proof");
     let proof = eth_client.generate_proof(&signal, &transfer).await?;
 
     info!("[9/9] Collecting rewards from escrow");
     let collect = eth_client
-        .collect(eoa_1, signal.clone(), proof, transfer.block_number.unwrap())
+        .collect(
+            &provider,
+            eoa_1,
+            signal.clone(),
+            proof,
+            transfer.block_number.unwrap(),
+        )
         .await?;
 
     // Send receipt to client
-    let client = reqwest::Client::new();
-    let res = client
-        .post(&signal.acknowledgement_url)
-        .json(&ReceiptFormat {
+    acknowledgement(
+        signal.acknowledgement_url,
+        ReceiptFormat {
             start_time,
             end_time: Utc::now().to_rfc3339(),
             approval_transaction_hash: approve.transaction_hash.to_string(),
             bond_transaction_hash: bond.transaction_hash.to_string(),
             transfer_transaction_hash: transfer.transaction_hash.to_string(),
             collection_transaction_hash: collect.transaction_hash.to_string(),
-        })
-        .send()
-        .await;
-    match res {
-        Err(e) => {
-            warn!(
-                "Failed to send receipt to {}: {}",
-                signal.acknowledgement_url, e
-            );
-        }
-        Ok(_) => {
-            info!(
-                "Receipt sent successfully to {}",
-                signal.acknowledgement_url
-            );
-        }
-    }
+        },
+    )
+    .await;
 
     info!(
         "Successfully processed payment of {} tokens to {}",
         signal.transfer_amount, signal.recipient
     );
+
     Ok(())
+}
+
+#[instrument(skip(receipt))]
+async fn acknowledgement(url: String, receipt: ReceiptFormat) {
+    let res = reqwest::Client::new().post(url).json(&receipt).send().await;
+    match res {
+        Err(e) => warn!(?e, "Failed to send receipt"),
+        Ok(_) => info!("Receipt sent successfully"),
+    }
 }

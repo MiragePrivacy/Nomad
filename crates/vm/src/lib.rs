@@ -1,4 +1,5 @@
 use affair::{DedicatedThread, Executor, Socket, Worker};
+use tracing::{instrument, trace, Span};
 
 /// Type alias for the worker socket
 pub type VmSocket = Socket<<NomadVm as Worker>::Request, <NomadVm as Worker>::Response>;
@@ -28,9 +29,12 @@ impl NomadVm {
 }
 
 impl Worker for NomadVm {
-    type Request = Vec<u8>;
+    type Request = (Vec<u8>, Span);
     type Response = [u8; 32];
-    fn handle(&mut self, req: Self::Request) -> Self::Response {
-        self.execute(req)
+
+    #[instrument(name = "vm", skip_all, parent = span)]
+    fn handle(&mut self, (program, span): Self::Request) -> Self::Response {
+        trace!("Received {} byte program", program.len());
+        self.execute(program)
     }
 }
