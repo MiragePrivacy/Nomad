@@ -2,7 +2,7 @@ use alloy::signers::local::PrivateKeySigner;
 use chrono::Utc;
 use clap::Parser;
 use color_eyre::eyre::{eyre, Result};
-use opentelemetry::{global::meter_provider, KeyValue};
+use opentelemetry::global::meter_provider;
 use reqwest::Url;
 use tokio::sync::mpsc::unbounded_channel;
 use tracing::{error, field::Empty, info, info_span, instrument, warn, Span};
@@ -72,14 +72,20 @@ impl RunArgs {
         let vm_socket = NomadVm::new().spawn();
 
         let meter = meter_provider().meter(env!("CARGO_BIN_NAME"));
+        let up = meter.u64_gauge("up").with_description("Node is up").build();
+        up.record(1, &[]);
+        let mut failures = 0;
         let failure_counter = meter
-            .u64_counter("signal_failure")
+            .u64_gauge("signal_failure")
             .with_description("Number of failures when processing signals")
             .build();
+        failure_counter.record(0, &[]);
+        let mut successes = 0;
         let success_counter = meter
-            .u64_counter("signal_success")
+            .u64_gauge("signal_success")
             .with_description("Number of successfully processed signals")
             .build();
+        success_counter.record(0, &[]);
 
         // Main event loop
         loop {
@@ -100,7 +106,8 @@ impl RunArgs {
                 error!("Failed to process signal");
                 let error = format!("{e:#}");
                 error!(error);
-                failure_counter.add(1, &[KeyValue::new("error", error)]);
+                failures += 1;
+                failure_counter.record(failures, &[]);
             } else {
                 info!(
                     monotonic_counter.signal_success = 1,
@@ -110,10 +117,8 @@ impl RunArgs {
                 );
                 span.record("otel.status_code", "OK");
                 span.record("otel.status_message", format!("{signal:?}"));
-                success_counter.add(
-                    1,
-                    &[KeyValue::new("token", signal.token_contract.to_string())],
-                );
+                successes += 1;
+                success_counter.record(successes, &[]);
             }
         }
     }
