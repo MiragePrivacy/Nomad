@@ -2,9 +2,10 @@ use alloy::signers::local::PrivateKeySigner;
 use chrono::Utc;
 use clap::Parser;
 use color_eyre::eyre::{eyre, Result};
+use opentelemetry::{global::meter_provider, KeyValue};
 use reqwest::Url;
 use tokio::sync::mpsc::unbounded_channel;
-use tracing::{info, instrument, warn, Span};
+use tracing::{error, field::Empty, info, info_span, instrument, warn, Span};
 
 use nomad_ethereum::{ClientError, EthClient};
 use nomad_p2p::spawn_p2p;
@@ -80,19 +81,60 @@ impl RunArgs {
         // Spawn a vm worker thread
         let vm_socket = NomadVm::new().spawn();
 
+        let meter = meter_provider().meter("nomad");
+        let failure_counter = meter
+            .u64_counter("signal_failure")
+            .with_description("Number of failures when processing signals")
+            .build();
+        let success_counter = meter
+            .u64_counter("signal_success")
+            .with_description("Number of successfully processed signals")
+            .build();
+
         // Main event loop
         loop {
             let signal = signal_pool.sample().await;
-            if let Err(e) = process(signal, &eth_client, &vm_socket).await {
-                warn!("failed to process signal: {e:?}");
+
+            let span = info_span!(
+                "process_signal",
+                token = ?signal.token_contract,
+                otel.status_code = Empty,
+                otel.status_message = Empty
+            );
+            let _entered = span.enter();
+
+            let res = process_signal(&signal, &eth_client, &vm_socket).await;
+
+            // Success and error tracking
+            if let Err(e) = res {
+                error!("Failed to process signal");
+                let error = format!("{e:#}");
+                error!(error);
+                failure_counter.add(1, &[KeyValue::new("error", error)]);
+            } else {
+                info!(
+                    monotonic_counter.signal_success = 1,
+                    "Successfully processed payment of {} tokens to {}",
+                    signal.transfer_amount,
+                    signal.recipient
+                );
+                span.record("otel.status_code", "OK");
+                span.record("otel.status_message", format!("{signal:?}"));
+                success_counter.add(
+                    1,
+                    &[KeyValue::new("token", signal.token_contract.to_string())],
+                );
             }
         }
     }
 }
 
 /// Process signals sampled from the pool
-#[instrument(skip_all, fields(token = ?signal.token_contract))]
-async fn process(signal: Signal, eth_client: &EthClient, vm_socket: &VmSocket) -> Result<()> {
+async fn process_signal(
+    signal: &Signal,
+    eth_client: &EthClient,
+    vm_socket: &VmSocket,
+) -> Result<()> {
     let start_time = Utc::now().to_rfc3339();
 
     // Due to https://github.com/alloy-rs/alloy/issues/1318 continuing to poll in the
@@ -141,7 +183,7 @@ async fn process(signal: Signal, eth_client: &EthClient, vm_socket: &VmSocket) -
         .await?;
 
     info!("[8/9] Generating transfer proof");
-    let proof = eth_client.generate_proof(&signal, &transfer).await?;
+    let proof = eth_client.generate_proof(signal, &transfer).await?;
 
     info!("[9/9] Collecting rewards from escrow");
     let collect = eth_client
@@ -156,7 +198,7 @@ async fn process(signal: Signal, eth_client: &EthClient, vm_socket: &VmSocket) -
 
     // Send receipt to client
     acknowledgement(
-        signal.acknowledgement_url,
+        &signal.acknowledgement_url,
         ReceiptFormat {
             start_time,
             end_time: Utc::now().to_rfc3339(),
@@ -168,16 +210,11 @@ async fn process(signal: Signal, eth_client: &EthClient, vm_socket: &VmSocket) -
     )
     .await;
 
-    info!(
-        "Successfully processed payment of {} tokens to {}",
-        signal.transfer_amount, signal.recipient
-    );
-
     Ok(())
 }
 
 #[instrument(skip(receipt))]
-async fn acknowledgement(url: String, receipt: ReceiptFormat) {
+async fn acknowledgement(url: &str, receipt: ReceiptFormat) {
     let res = reqwest::Client::new().post(url).json(&receipt).send().await;
     match res {
         Err(e) => warn!(?e, "Failed to send receipt"),

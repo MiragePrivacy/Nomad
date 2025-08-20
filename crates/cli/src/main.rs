@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Duration};
 
 use alloy::signers::local::PrivateKeySigner;
 use clap::{ArgAction, Parser};
@@ -8,14 +8,14 @@ use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
 use opentelemetry_otlp::{MetricExporter, SpanExporter, WithExportConfig, WithHttpConfig};
 use opentelemetry_sdk::{
     logs::SdkLoggerProvider,
-    metrics::SdkMeterProvider,
+    metrics::{PeriodicReader, SdkMeterProvider},
     trace::{Sampler, SdkTracerProvider},
     Resource,
 };
 use opentelemetry_semantic_conventions::{resource::SERVICE_VERSION, SCHEMA_URL};
 use tracing::{info, trace};
 use tracing_error::ErrorLayer;
-use tracing_opentelemetry::{MetricsLayer, OpenTelemetryLayer};
+use tracing_opentelemetry::OpenTelemetryLayer;
 use tracing_subscriber::{
     layer::SubscriberExt, registry, util::SubscriberInitExt, EnvFilter, Layer,
 };
@@ -110,7 +110,6 @@ impl Cli {
 
         let mut logger = None;
         let mut tracer = None;
-        let mut metrics = None;
         if let Some(url) = &config.otlp.url {
             // Create a Resource that captures information about the entity for which telemetry is recorded.
             let resource = Resource::builder()
@@ -119,6 +118,13 @@ impl Cli {
                     [KeyValue::new(SERVICE_VERSION, env!("CARGO_PKG_VERSION"))],
                     SCHEMA_URL,
                 )
+                .with_attribute(KeyValue::new(
+                    "hostname",
+                    hostname::get()
+                        .unwrap_or("unknown".into())
+                        .display()
+                        .to_string(),
+                ))
                 .build();
 
             if config.otlp.logs {
@@ -158,6 +164,7 @@ impl Cli {
                         .with_threads(false)
                         .with_location(false)
                         .with_tracked_inactivity(false)
+                        .with_error_records_to_exceptions(true)
                         .with_filter(
                             EnvFilter::builder()
                                 .parse_lossy(workspace_filter!("trace", "info,nomad={level}")),
@@ -173,10 +180,14 @@ impl Cli {
                     .build()
                     .unwrap();
                 let provider = SdkMeterProvider::builder()
-                    .with_periodic_exporter(exporter)
+                    .with_reader(
+                        PeriodicReader::builder(exporter)
+                            .with_interval(Duration::from_secs(10))
+                            .build(),
+                    )
                     .with_resource(resource)
                     .build();
-                metrics = Some(MetricsLayer::new(provider));
+                opentelemetry::global::set_meter_provider(provider.clone());
             }
         }
 
@@ -185,7 +196,6 @@ impl Cli {
             .with(console)
             .with(logger)
             .with(tracer)
-            .with(metrics)
             .init();
 
         trace!(env_filter);
