@@ -120,10 +120,7 @@ impl Cli {
                 )
                 .with_attribute(KeyValue::new(
                     "host",
-                    hostname::get()
-                        .unwrap_or("unknown".into())
-                        .display()
-                        .to_string(),
+                    std::fs::read_to_string("/etc/hostname").unwrap_or("unknown".into()),
                 ))
                 .build();
 
