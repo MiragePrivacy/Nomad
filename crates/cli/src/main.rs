@@ -143,6 +143,9 @@ impl Cli {
             if let Some(ip) = ip {
                 resource = resource.with_attribute(KeyValue::new("host.ip", ip.to_string()));
             }
+            if let Ok(env) = std::env::var("ENV") {
+                resource = resource.with_attribute(KeyValue::new("deployment.environment", env))
+            }
             let resource = resource.build();
 
             if config.otlp.logs {
