@@ -14,6 +14,7 @@ use opentelemetry_sdk::{
 };
 use opentelemetry_semantic_conventions::{resource::SERVICE_VERSION, SCHEMA_URL};
 use tracing::{info, trace};
+use tracing_error::ErrorLayer;
 use tracing_opentelemetry::{MetricsLayer, OpenTelemetryLayer};
 use tracing_subscriber::{
     layer::SubscriberExt, registry, util::SubscriberInitExt, EnvFilter, Layer,
@@ -180,6 +181,7 @@ impl Args {
         }
 
         registry()
+            .with(ErrorLayer::default())
             .with(console)
             .with(logger)
             .with(tracer)

@@ -3894,6 +3894,7 @@ dependencies = [
  "tokio",
  "toml 0.9.5",
  "tracing",
+ "tracing-error",
  "tracing-opentelemetry",
  "tracing-subscriber",
  "workspace-filter",
