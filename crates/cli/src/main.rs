@@ -119,7 +119,7 @@ impl Cli {
                     SCHEMA_URL,
                 )
                 .with_attribute(KeyValue::new(
-                    "host",
+                    "host.name",
                     hostname::get()
                         .unwrap_or("unknown".into())
                         .display()
