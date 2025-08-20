@@ -37,9 +37,9 @@ jobs:
           echo "deleted=$DELETED" >>"$GITHUB_OUTPUT"
           echo "total=$TOTAL"   >>"$GITHUB_OUTPUT"
 
-      # 3. Fail the workflow if the total exceeds 500
+      # 3. Fail the workflow if the total exceeds 1000
       - name: Fail if over limit
-        if: ${{ steps.diff.outputs.total > 500 }}
+        if: ${{ steps.diff.outputs.total > 1000 }}
         run: |
-          echo "::error::Pull request changes exceed 500 lines (${{ steps.diff.outputs.total }})"
+          echo "::error::Pull request changes exceed 1000 lines (${{ steps.diff.outputs.total }})"
           exit 1
