@@ -81,7 +81,7 @@ impl RunArgs {
         // Spawn a vm worker thread
         let vm_socket = NomadVm::new().spawn();
 
-        let meter = meter_provider().meter("nomad");
+        let meter = meter_provider().meter(env!("CARGO_BIN_NAME"));
         let failure_counter = meter
             .u64_counter("signal_failure")
             .with_description("Number of failures when processing signals")

@@ -113,7 +113,7 @@ impl Cli {
         if let Some(url) = &config.otlp.url {
             // Create a Resource that captures information about the entity for which telemetry is recorded.
             let resource = Resource::builder()
-                .with_service_name(env!("CARGO_PKG_NAME"))
+                .with_service_name(env!("CARGO_BIN_NAME"))
                 .with_schema_url(
                     [KeyValue::new(SERVICE_VERSION, env!("CARGO_PKG_VERSION"))],
                     SCHEMA_URL,
@@ -160,7 +160,7 @@ impl Cli {
                     .with_resource(resource.clone())
                     .build();
                 tracer = Some(
-                    OpenTelemetryLayer::new(provider.tracer("nomad"))
+                    OpenTelemetryLayer::new(provider.tracer(env!("CARGO_BIN_NAME")))
                         .with_threads(false)
                         .with_location(false)
                         .with_tracked_inactivity(false)
@@ -187,7 +187,7 @@ impl Cli {
                     )
                     .with_resource(resource)
                     .build();
-                opentelemetry::global::set_meter_provider(provider.clone());
+                opentelemetry::global::set_meter_provider(provider);
             }
         }
 
@@ -203,17 +203,13 @@ impl Cli {
 }
 
 fn main() -> Result<()> {
-    let cli = Cli::parse();
-    let builder = color_eyre::config::HookBuilder::new()
+    color_eyre::config::HookBuilder::new()
         .display_env_section(false)
-        .display_location_section(false);
-    if cli.verbose < 2 {
-        builder
-            .issue_url(concat!(env!("CARGO_PKG_REPOSITORY"), "/issues/new"))
-            .add_issue_metadata("version", env!("CARGO_PKG_VERSION"))
-            .install()?;
-    } else {
-        builder.install()?;
-    }
+        .display_location_section(false)
+        .issue_url(concat!(env!("CARGO_PKG_REPOSITORY"), "/issues/new"))
+        .add_issue_metadata("version", env!("CARGO_PKG_VERSION"))
+        .install()?;
+
+    let cli = Cli::parse();
     tokio::runtime::Runtime::new()?.block_on(cli.execute())
 }
