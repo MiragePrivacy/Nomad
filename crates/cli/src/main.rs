@@ -167,7 +167,7 @@ impl Cli {
                         .with_error_records_to_exceptions(true)
                         .with_filter(
                             EnvFilter::builder()
-                                .parse_lossy(workspace_filter!("trace", "info,nomad={level}")),
+                                .parse_lossy(workspace_filter!("trace", "debug,nomad={level}")),
                         ),
                 );
             }
