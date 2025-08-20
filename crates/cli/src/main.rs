@@ -26,7 +26,7 @@ mod config;
 
 #[derive(Parser)]
 #[command(author, version, about)]
-pub(crate) struct Args {
+pub(crate) struct Cli {
     /// Path to config file
     #[arg(
         short,
@@ -56,7 +56,7 @@ pub(crate) struct Args {
     pub cmd: commands::Command,
 }
 
-impl Args {
+impl Cli {
     /// Run the app
     async fn execute(self) -> Result<()> {
         let config = config::Config::load(&self.config)?;
@@ -192,8 +192,18 @@ impl Args {
     }
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    color_eyre::install()?;
-    Args::parse().execute().await
+fn main() -> Result<()> {
+    let cli = Cli::parse();
+    let builder = color_eyre::config::HookBuilder::new()
+        .display_env_section(false)
+        .display_location_section(false);
+    if cli.verbose < 2 {
+        builder
+            .issue_url(concat!(env!("CARGO_PKG_REPOSITORY"), "/issues/new"))
+            .add_issue_metadata("version", env!("CARGO_PKG_VERSION"))
+            .install()?;
+    } else {
+        builder.install()?;
+    }
+    tokio::runtime::Runtime::new()?.block_on(cli.execute())
 }

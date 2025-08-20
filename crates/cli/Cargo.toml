@@ -2,6 +2,7 @@
 name = "nomad-cli"
 version.workspace = true
 edition.workspace = true
+repository.workspace = true
 
 [[bin]]
 name = "nomad"
@@ -21,7 +22,7 @@ serde.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 
-color-eyre = "0.6.5"
+color-eyre = { version = "0.6.5", features = ["issue-url"] }
 clap = { version = "4.5.37", features = ["derive", "env"] }
 chrono = { version = "0.4", features = ["clock", "std"] }
 local-ip-address = "0.6.5"

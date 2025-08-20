@@ -4,7 +4,7 @@ use clap::Parser;
 use color_eyre::eyre::{eyre, Result};
 use reqwest::Url;
 use tokio::sync::mpsc::unbounded_channel;
-use tracing::{info, instrument, warn, Level, Span};
+use tracing::{info, instrument, warn, Span};
 
 use nomad_ethereum::{ClientError, EthClient};
 use nomad_p2p::spawn_p2p;
@@ -83,13 +83,15 @@ impl RunArgs {
         // Main event loop
         loop {
             let signal = signal_pool.sample().await;
-            let _ = process(signal, &eth_client, &vm_socket).await;
+            if let Err(e) = process(signal, &eth_client, &vm_socket).await {
+                warn!("failed to process signal: {e:?}");
+            }
         }
     }
 }
 
 /// Process signals sampled from the pool
-#[instrument(skip_all, err(Debug, level = Level::WARN))]
+#[instrument(skip_all, fields(token = ?signal.token_contract))]
 async fn process(signal: Signal, eth_client: &EthClient, vm_socket: &VmSocket) -> Result<()> {
     let start_time = Utc::now().to_rfc3339();
 
