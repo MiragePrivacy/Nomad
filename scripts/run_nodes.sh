@@ -416,45 +416,30 @@ elif [ ${#SENDER_KEYS[@]} -gt 0 ]; then
   echo "Cannot validate balances. Set TOKEN_CONTRACT and RPC to enable balance checking."
 fi
 
-# Download and compile Escrow contract
+# Download Escrow contract bytecode
 setup_escrow_contract() {
   local contract_dir="/tmp/escrow_$$"
   mkdir -p "$contract_dir"
   
   echo "[runner] Setting up Escrow contract..."
-  if ! curl -s -L "https://raw.githubusercontent.com/MiragePrivacy/escrow/master/src/Escrow.sol" -o "$contract_dir/Escrow.sol"; then
-    echo "[runner] ERROR: Failed to download Escrow contract"
+  
+  # Download the precompiled bytecode
+  echo "[runner] Downloading precompiled bytecode..."
+  if ! curl -s -L "https://raw.githubusercontent.com/MiragePrivacy/escrow/master/artifacts/bytecode.hex" -o "$contract_dir/bytecode.hex"; then
+    echo "[runner] ERROR: Failed to download bytecode"
     return 1
   fi
   
-  # Create a basic foundry.toml for compilation
-  cat > "$contract_dir/foundry.toml" << 'EOF'
-[profile.default]
-src = "."
-out = "out"
-libs = ["lib"]
-optimizer = true
-optimizer_runs = 200
-EOF
-  
-  local compile_output
-  compile_output=$(FOUNDRY_DISABLE_NIGHTLY_WARNING=1 forge build --root "$contract_dir" --contracts "$contract_dir" --out "$contract_dir/out" 2>&1)
-  local compile_status=$?
-  
-  if [ $compile_status -ne 0 ]; then
-    echo "[runner] ERROR: Failed to compile Escrow contract"
-    echo "[runner] Compile output: $compile_output"
-    return 1
-  fi
-  
-  if [ ! -f "$contract_dir/out/Escrow.sol/Escrow.json" ]; then
-    echo "[runner] ERROR: Compiled artifact not found at expected location"
+  # Verify the bytecode file is not empty and starts with 0x
+  local bytecode=$(cat "$contract_dir/bytecode.hex" 2>/dev/null)
+  if [ -z "$bytecode" ] || [[ ! "$bytecode" =~ ^0x[0-9a-fA-F]+$ ]]; then
+    echo "[runner] ERROR: Invalid bytecode format"
     return 1
   fi
   
   # Export path for later use
   export ESCROW_CONTRACT_DIR="$contract_dir"
-  echo "[runner] Escrow contract compiled successfully"
+  echo "[runner] Escrow contract bytecode ready"
 }
 
 # Setup escrow contract if we have sender keys
@@ -578,36 +563,25 @@ done
 deploy_escrow() {
   local sender_key=$1
   local token_contract=$2
+  local recipient=$3
+  local expected_amount=$4
   
   # Validation checks
-  if [ -z "$ESCROW_CONTRACT_DIR" ] || [ ! -f "$ESCROW_CONTRACT_DIR/Escrow.sol" ]; then
-    echo "[runner] ERROR: Escrow contract not available" >&2
-    return 1
-  fi
-  
-  # Check if contract artifacts exist
-  local artifact_path="$ESCROW_CONTRACT_DIR/out/Escrow.sol/Escrow.json"
-  if [ ! -f "$artifact_path" ]; then
-    echo "[runner] ERROR: Contract artifact not found at $artifact_path" >&2
+  if [ -z "$ESCROW_CONTRACT_DIR" ] || [ ! -f "$ESCROW_CONTRACT_DIR/bytecode.hex" ]; then
+    echo "[runner] ERROR: Escrow contract bytecode not available" >&2
     return 1
   fi
   
   # Read and validate bytecode
-  local raw_json=$(cat "$artifact_path" 2>/dev/null)
-  if [ -z "$raw_json" ]; then
-    echo "[runner] ERROR: Could not read artifact file" >&2
-    return 1
-  fi
-  
-  local bytecode=$(echo "$raw_json" | jq -r '.bytecode.object' 2>/dev/null)
-  if [ -z "$bytecode" ] || [ "$bytecode" = "null" ]; then
-    echo "[runner] ERROR: Could not read contract bytecode from JSON" >&2
+  local bytecode=$(cat "$ESCROW_CONTRACT_DIR/bytecode.hex" 2>/dev/null)
+  if [ -z "$bytecode" ] || [[ ! "$bytecode" =~ ^0x[0-9a-fA-F]+$ ]]; then
+    echo "[runner] ERROR: Invalid bytecode format" >&2
     return 1
   fi
   
   # Encode constructor arguments
   local constructor_args
-  constructor_args=$(env FOUNDRY_DISABLE_NIGHTLY_WARNING=1 cast abi-encode 'constructor(address)' "$token_contract" 2>/dev/null)
+  constructor_args=$(env FOUNDRY_DISABLE_NIGHTLY_WARNING=1 cast abi-encode 'constructor(address,address,uint256)' "$token_contract" "$recipient" "$expected_amount" 2>/dev/null)
   local encode_status=$?
   
   if [ $encode_status -ne 0 ] || [ -z "$constructor_args" ]; then
@@ -759,7 +733,7 @@ deploy_escrow_and_send_signal() {
   # Deploy escrow contract
   local escrow_address
   set +e  # Temporarily disable exit on error
-  escrow_address=$(deploy_escrow "$sender_key" "$TOKEN_CONTRACT" 2>/dev/null)
+  escrow_address=$(deploy_escrow "$sender_key" "$TOKEN_CONTRACT" "$recipient" "$transfer_amount" 2>/dev/null)
   local deploy_status=$?
   set -e  # Re-enable exit on error
   
