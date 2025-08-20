@@ -53,16 +53,6 @@ impl RunArgs {
     pub async fn execute(self, mut config: Config, signers: Vec<PrivateKeySigner>) -> Result<()> {
         self.override_config(&mut config);
 
-        // Log local and remote ip addresses
-        if let Ok(local_ip) = local_ip_address::local_ip() {
-            info!("Local Address: {local_ip}");
-        }
-        if let Ok(res) = reqwest::get("https://ifconfig.me/ip").await {
-            if let Ok(remote_ip) = res.text().await {
-                info!("Remote Address: {remote_ip}");
-            }
-        }
-
         // Setup background server tasks, shared signal pool
         let signal_pool = SignalPool::new(65535);
         let (signal_tx, signal_rx) = unbounded_channel();

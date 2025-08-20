@@ -1,4 +1,4 @@
-use std::{path::PathBuf, time::Duration};
+use std::{net::IpAddr, path::PathBuf, time::Duration};
 
 use alloy::signers::local::PrivateKeySigner;
 use clap::{ArgAction, Parser};
@@ -60,7 +60,7 @@ impl Cli {
     /// Run the app
     async fn execute(self) -> Result<()> {
         let config = config::Config::load(&self.config)?;
-        self.setup_logging(&config);
+        self.setup_logging(&config).await?;
         let signers = self.build_signers()?;
         self.cmd.execute(config, signers).await
     }
@@ -85,8 +85,20 @@ impl Cli {
             .collect()
     }
 
+    /// Get and log global ip address
+    async fn global_ip(&self, config: &config::Config) -> Result<Option<IpAddr>> {
+        if config.otlp.url.is_some() || matches!(self.cmd, commands::Command::Run(_)) {
+            if let Ok(res) = reqwest::get("https://ifconfig.me/ip").await {
+                if let Ok(remote_ip) = res.text().await {
+                    return Ok(Some(remote_ip.parse()?));
+                }
+            }
+        }
+        Ok(None)
+    }
+
     // Setup logging filters and subscriber
-    pub fn setup_logging(&self, config: &config::Config) {
+    pub async fn setup_logging(&self, config: &config::Config) -> Result<()> {
         // Setup console logging
         let filter = std::env::var("RUST_LOG").unwrap_or_else(|_| {
             // Default which is directed by the verbosity flag
@@ -108,11 +120,14 @@ impl Cli {
             .compact()
             .with_filter(filter);
 
+        // fetch ip address if we're running the node or telemetry is enabled
+        let ip = self.global_ip(config).await?;
+
         let mut logger = None;
         let mut tracer = None;
         if let Some(url) = &config.otlp.url {
             // Create a Resource that captures information about the entity for which telemetry is recorded.
-            let resource = Resource::builder()
+            let mut resource = Resource::builder()
                 .with_service_name(env!("CARGO_BIN_NAME"))
                 .with_schema_url(
                     [KeyValue::new(SERVICE_VERSION, env!("CARGO_PKG_VERSION"))],
@@ -124,8 +139,11 @@ impl Cli {
                         .unwrap_or("unknown".into())
                         .display()
                         .to_string(),
-                ))
-                .build();
+                ));
+            if let Some(ip) = ip {
+                resource = resource.with_attribute(KeyValue::new("host.ip", ip.to_string()));
+            }
+            let resource = resource.build();
 
             if config.otlp.logs {
                 let exporter = opentelemetry_otlp::LogExporter::builder()
@@ -199,6 +217,10 @@ impl Cli {
             .init();
 
         trace!(env_filter);
+        if let Some(ip) = ip {
+            info!("Remote Address: {ip}");
+        }
+        Ok(())
     }
 }
 
