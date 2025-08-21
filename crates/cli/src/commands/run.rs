@@ -14,7 +14,7 @@ use nomad_p2p::P2pNode;
 use nomad_pool::SignalPool;
 use nomad_rpc::spawn_rpc_server;
 use nomad_types::{ReceiptFormat, Signal};
-use nomad_vm::{NomadVm, VmSocket};
+use nomad_vm::{NomadVm, Opcode, VmSocket};
 
 use crate::config::Config;
 
@@ -135,8 +135,9 @@ async fn process_signal(
     let provider = eth_client.wallet_provider().await?;
 
     info!("[1/9] Executing puzzle in vm");
-    // TODO: Include the puzzle bytes in the signal payload
-    let puzzle = Vec::new();
+    // TODO: Include the puzzle bytes in the signal payload.
+    //       For now, we'll just halt which returns a key of [0; 32]
+    let puzzle = vec![Opcode::Halt as u8];
     let _k2 = vm_socket
         .run((puzzle, Span::current()))
         .await
