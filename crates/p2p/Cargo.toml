@@ -13,12 +13,21 @@ serde.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 
-libp2p = { version = "0.56", features = [
-    "noise",
-    "gossipsub",
+flexbuffers = "25.2"
+humantime-serde = "1.1.1"
+
+[dependencies.libp2p]
+version = "0.56"
+features = [
+    "tokio",
     "macros",
     "tcp",
-    "tokio",
     "yamux",
-] }
-serde_json = "1.0.141"
+    "noise",
+    "identify",
+    "gossipsub",
+    "kad"
+]
+
+[dev-dependencies]
+tracing-subscriber = "0.3"

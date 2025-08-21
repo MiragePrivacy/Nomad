@@ -5,6 +5,8 @@ use alloy::primitives::{Address, U256};
 use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
 
+pub use alloy::primitives;
+
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq)]
 pub struct Signal {
     pub escrow_contract: Address,

@@ -1,3 +1,5 @@
+use std::sync::atomic::AtomicBool;
+
 use alloy::signers::local::PrivateKeySigner;
 use chrono::Utc;
 use clap::Parser;
@@ -8,7 +10,7 @@ use tokio::sync::mpsc::unbounded_channel;
 use tracing::{error, field::Empty, info, info_span, instrument, warn, Span};
 
 use nomad_ethereum::{ClientError, EthClient};
-use nomad_p2p::spawn_p2p;
+use nomad_p2p::P2pNode;
 use nomad_pool::SignalPool;
 use nomad_rpc::spawn_rpc_server;
 use nomad_types::{ReceiptFormat, Signal};
@@ -53,8 +55,7 @@ impl RunArgs {
     pub async fn execute(self, mut config: Config, signers: Vec<PrivateKeySigner>) -> Result<()> {
         self.override_config(&mut config);
 
-        // Setup background server tasks, shared signal pool
-        let signal_pool = SignalPool::new(65535);
+        // Spawn rpc server
         let (signal_tx, signal_rx) = unbounded_channel();
         let _ = spawn_rpc_server(config.rpc, signal_tx).await;
 
@@ -63,29 +64,30 @@ impl RunArgs {
         if read_only {
             warn!("No signers provided; running node in read-only mode!");
         }
-        let _ = spawn_p2p(config.p2p, read_only, signal_rx, signal_pool.clone());
+        let read_only = AtomicBool::new(read_only).into();
 
-        // Build eth clients
+        // Create shared signal pool and spawn p2p server
+        let signal_pool = SignalPool::new(65535);
+        P2pNode::new(config.p2p, signal_pool.clone(), read_only, Some(signal_rx))?.spawn();
+
+        // Build eth client
         let eth_client = EthClient::new(config.eth, signers).await?;
 
         // Spawn a vm worker thread
         let vm_socket = NomadVm::new().spawn();
 
+        // Setup metrics
         let meter = meter_provider().meter(env!("CARGO_BIN_NAME"));
         let up = meter.u64_gauge("up").with_description("Node is up").build();
         up.record(1, &[]);
-        let mut failures = 0;
         let failure_counter = meter
-            .u64_gauge("signal_failure")
+            .u64_counter("signal_failure")
             .with_description("Number of failures when processing signals")
             .build();
-        failure_counter.record(0, &[]);
-        let mut successes = 0;
         let success_counter = meter
-            .u64_gauge("signal_success")
+            .u64_counter("signal_success")
             .with_description("Number of successfully processed signals")
             .build();
-        success_counter.record(0, &[]);
 
         // Main event loop
         loop {
@@ -104,21 +106,16 @@ impl RunArgs {
             // Success and error tracking
             if let Err(e) = res {
                 error!("Failed to process signal");
-                let error = format!("{e:#}");
-                error!(error);
-                failures += 1;
-                failure_counter.record(failures, &[]);
+                error!(error = format!("{e:#}"));
+                failure_counter.add(1, &[]);
             } else {
                 info!(
-                    monotonic_counter.signal_success = 1,
                     "Successfully processed payment of {} tokens to {}",
-                    signal.transfer_amount,
-                    signal.recipient
+                    signal.transfer_amount, signal.recipient
                 );
                 span.record("otel.status_code", "OK");
                 span.record("otel.status_message", format!("{signal:?}"));
-                successes += 1;
-                success_counter.record(successes, &[]);
+                success_counter.add(1, &[]);
             }
         }
     }
