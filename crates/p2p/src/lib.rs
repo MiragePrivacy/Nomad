@@ -155,20 +155,11 @@ impl P2pNode {
                     )) => {
                         debug!(?peer_id, "Peer identified");
                         for protocol in &info.protocols {
-                            match protocol.as_ref() {
-                                MIRAGE_DISCOVERY_ID => {
-                                    let kad = &mut self.swarm.behaviour_mut().kad;
-                                    for addr in info.listen_addrs.clone() {
-                                        kad.add_address(&peer_id, addr);
-                                    }
+                            if protocol.as_ref() == MIRAGE_DISCOVERY_ID {
+                                let kad = &mut self.swarm.behaviour_mut().kad;
+                                for addr in info.listen_addrs.clone() {
+                                    kad.add_address(&peer_id, addr);
                                 }
-                                p if p.starts_with(MIRAGE_MESHSUB_ID) => {
-                                    self.swarm
-                                        .behaviour_mut()
-                                        .gossipsub
-                                        .add_explicit_peer(&peer_id);
-                                }
-                                _ => {}
                             }
                         }
                     }
