@@ -11,8 +11,10 @@ path = "src/main.rs"
 [dependencies]
 nomad-ethereum = { path = "../ethereum" }
 nomad-node = { path = "../node" }
+nomad-puzzle = { path = "../puzzle" }
 nomad-rpc = { path = "../rpc" }
 nomad-types = { path = "../types" }
+
 
 alloy.workspace = true
 paste.workspace = true

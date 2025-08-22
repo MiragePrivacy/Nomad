@@ -1,4 +1,5 @@
 use crate::{VmError, REGISTERS};
+use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::io::{Result as IoResult, Write};
 
 #[derive(Debug, Clone, Copy)]
@@ -181,6 +182,23 @@ pub enum Instruction {
     /// Halt // Stop execution
     /// ```
     Halt(),
+}
+
+impl Display for Instruction {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        match self {
+            Instruction::Set(reg, val) => write!(f, "SET R{reg}, 0x{val:08X}"),
+            Instruction::Add(dst, src1, src2) => write!(f, "ADD R{dst}, R{src1}, R{src2}"),
+            Instruction::Sub(dst, src1, src2) => write!(f, "SUB R{dst}, R{src1}, R{src2}"),
+            Instruction::Xor(dst, src1, src2) => write!(f, "XOR R{dst}, R{src1}, R{src2}"),
+            Instruction::Load(reg, addr) => write!(f, "LOAD R{reg}, 0x{addr:08X}"),
+            Instruction::Store(reg, addr) => write!(f, "STORE R{reg}, 0x{addr:08X}"),
+            Instruction::Jmp(addr) => write!(f, "JMP 0x{addr:08X}"),
+            Instruction::JmpEq(r1, r2, addr) => write!(f, "JMPEQ R{r1}, R{r2}, 0x{addr:08X}"),
+            Instruction::JmpNe(r1, r2, addr) => write!(f, "JMPNE R{r1}, R{r2}, 0x{addr:08X}"),
+            Instruction::Halt() => write!(f, "HALT              "),
+        }
+    }
 }
 
 fn validate_reg(reg: u8) -> Result<u8, VmError> {

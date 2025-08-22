@@ -229,13 +229,17 @@ impl Cli {
 }
 
 fn main() -> Result<()> {
-    color_eyre::config::HookBuilder::new()
-        .display_env_section(false)
-        .display_location_section(false)
-        .issue_url(concat!(env!("CARGO_PKG_REPOSITORY"), "/issues/new"))
-        .add_issue_metadata("version", env!("CARGO_PKG_VERSION"))
-        .install()?;
-
     let cli = Cli::parse();
+
+    let mut hook = color_eyre::config::HookBuilder::new()
+        .display_env_section(false)
+        .display_location_section(false);
+    if matches!(cli.cmd, commands::Command::Run(_)) {
+        hook = hook
+            .issue_url(concat!(env!("CARGO_PKG_REPOSITORY"), "/issues/new"))
+            .add_issue_metadata("version", env!("CARGO_PKG_VERSION"));
+    }
+    hook.install()?;
+
     tokio::runtime::Runtime::new()?.block_on(cli.execute())
 }

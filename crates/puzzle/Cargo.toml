@@ -1,0 +1,11 @@
+[package]
+name = "nomad-puzzle"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+[dependencies]
+nomad-vm = { path = "../vm" }
+rand.workspace = true
+thiserror.workspace = true
+

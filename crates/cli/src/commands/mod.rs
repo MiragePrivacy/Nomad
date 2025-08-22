@@ -54,6 +54,8 @@ impl_command! {
     mod rpc;
     /// Use the faucet functionality on the given token contract. Requires keys.
     mod faucet;
+    /// Generate puzzles for the VM.
+    mod puzzle;
 
     pub struct Command;
 }
