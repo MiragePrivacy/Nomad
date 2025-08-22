@@ -4074,6 +4074,7 @@ name = "nomad-vm"
 version = "0.1.0"
 dependencies = [
  "affair",
+ "thiserror 2.0.14",
  "tracing",
 ]
 
