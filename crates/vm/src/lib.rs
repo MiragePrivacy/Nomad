@@ -86,7 +86,7 @@ impl NomadVm {
     }
 
     /// Executes a program, resets, and returns the result from the concatinated registers.
-    fn execute_program(&mut self, program: Program) -> Result<[u8; 32], VmError> {
+    pub fn execute_program(&mut self, program: Program) -> Result<[u8; 32], VmError> {
         // Execute instructions
         let mut cycles = 0;
         while let Some(instruction) = program.get(self.pc) {

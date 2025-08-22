@@ -24,6 +24,7 @@ tracing.workspace = true
 color-eyre = { version = "0.6", features = ["issue-url"] }
 clap = { version = "4.5", features = ["derive", "env"] }
 hostname = "0.4.1"
+rand = { version = "0.9", features = ["std_rng"] }
 reqwest = { version = "0.12", features = ["json"] }
 workspace-filter = "0.1.0"
 

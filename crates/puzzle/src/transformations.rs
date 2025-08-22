@@ -2,68 +2,7 @@ use crate::ArithmeticOp;
 use std::{
     collections::HashMap,
     fmt::{Display, Formatter, Result as FmtResult},
-    ops::Deref,
 };
-
-/// A map that tracks transformations applied to register states
-pub struct TransformationMap {
-    transformations: Vec<TransformationEntry>,
-}
-
-pub struct TransformationEntry {
-    input_state: [u32; 8],
-    transformation: Transformation,
-    output_state: [u32; 8],
-}
-
-impl Default for TransformationMap {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl TransformationMap {
-    pub fn new() -> Self {
-        Self {
-            transformations: Vec::new(),
-        }
-    }
-
-    pub fn add_transformation(
-        &mut self,
-        input_state: [u32; 8],
-        transformation: Transformation,
-        output_state: [u32; 8],
-    ) {
-        self.transformations.push(TransformationEntry {
-            input_state,
-            transformation,
-            output_state,
-        });
-    }
-}
-
-impl Deref for TransformationMap {
-    type Target = [TransformationEntry];
-
-    fn deref(&self) -> &Self::Target {
-        &self.transformations
-    }
-}
-
-impl TransformationEntry {
-    pub fn input_state(&self) -> &[u32; 8] {
-        &self.input_state
-    }
-
-    pub fn transformation(&self) -> &Transformation {
-        &self.transformation
-    }
-
-    pub fn output_state(&self) -> &[u32; 8] {
-        &self.output_state
-    }
-}
 
 /// Different types of transformations that can be applied to register states
 #[derive(Debug, Clone)]
@@ -96,6 +35,12 @@ pub enum Transformation {
     RegisterShuffle {
         mapping: HashMap<u8, u8>, // Source register -> destination register
     },
+
+    /// Split data flow into multiple parallel paths
+    Split {},
+
+    /// Rejoin multiple parallel paths into fewer outputs
+    Rejoin {},
 }
 
 impl Transformation {
@@ -125,6 +70,7 @@ impl Transformation {
                 // Register moves with temporary storage
                 mapping.len() * 3
             }
+            Transformation::Split {} | Transformation::Rejoin {} => 0,
         }
     }
 
@@ -160,6 +106,8 @@ impl Transformation {
             Transformation::EncryptionRound { .. } => (0..8).collect(),
             Transformation::RegisterShuffle { mapping } => mapping.keys().copied().collect(),
             Transformation::MemoryScramble { .. } => (0..8).collect(),
+            Transformation::Split { .. } => (0..8).collect(), // Affects all registers during split
+            Transformation::Rejoin { .. } => (0..8).collect(), // Affects all registers during rejoin
         }
     }
 }
@@ -213,194 +161,12 @@ impl Display for Transformation {
             Transformation::RegisterShuffle { mapping } => {
                 write!(f, "Register Shuffle ({} mappings)", mapping.len())
             }
-        }
-    }
-}
-
-impl Display for TransformationMap {
-    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        writeln!(f, "graph TD")?;
-        writeln!(
-            f,
-            "    classDef arithmetic fill:#e1f5fe,stroke:#01579b,color:#01579b"
-        )?;
-        writeln!(
-            f,
-            "    classDef memory fill:#f3e5f5,stroke:#4a148c,color:#4a148c"
-        )?;
-        writeln!(
-            f,
-            "    classDef jump fill:#fff3e0,stroke:#e65100,color:#e65100"
-        )?;
-        writeln!(
-            f,
-            "    classDef encryption fill:#e8f5e8,stroke:#1b5e20,color:#1b5e20"
-        )?;
-        writeln!(
-            f,
-            "    classDef shuffle fill:#fce4ec,stroke:#880e4f,color:#880e4f"
-        )?;
-        writeln!(
-            f,
-            "    classDef state fill:#f5f5f5,stroke:#424242,color:#424242"
-        )?;
-        writeln!(f)?;
-
-        // Track unique states to avoid duplication
-        let mut state_counter = 0;
-        let mut state_map = HashMap::new();
-
-        // First pass: collect all unique states
-        for entry in self.transformations.iter() {
-            let input_hash = hash_state(entry.input_state);
-            let output_hash = hash_state(*entry.output_state());
-
-            if let std::collections::hash_map::Entry::Vacant(e) = state_map.entry(input_hash) {
-                e.insert(state_counter);
-                writeln!(
-                    f,
-                    "    S{}[\"State {}<br/>{}\"]:::state",
-                    state_counter,
-                    state_counter,
-                    format_state(entry.input_state)
-                )?;
-                state_counter += 1;
+            Transformation::Split {} => {
+                write!(f, "Split")
             }
-
-            if let std::collections::hash_map::Entry::Vacant(e) = state_map.entry(output_hash) {
-                e.insert(state_counter);
-                writeln!(
-                    f,
-                    "    S{}[\"State {}<br/>{}\"]:::state",
-                    state_counter,
-                    state_counter,
-                    format_state(*entry.output_state())
-                )?;
-                state_counter += 1;
+            Transformation::Rejoin {} => {
+                write!(f, "Rejoin")
             }
         }
-
-        writeln!(f)?;
-
-        // Second pass: create transformation nodes and connections
-        for (i, entry) in self.transformations.iter().enumerate() {
-            let input_hash = hash_state(entry.input_state);
-            let output_hash = hash_state(*entry.output_state());
-            let input_id = state_map[&input_hash];
-            let output_id = state_map[&output_hash];
-
-            // Create transformation node with execution order
-            let execution_order = i + 1; // 1-based ordering for better readability
-            let (transform_label, class) = match entry.transformation() {
-                Transformation::ArithmeticChain {
-                    operations,
-                    registers,
-                } => {
-                    let ops_str = operations
-                        .iter()
-                        .map(|op| match op {
-                            ArithmeticOp::Add => "ADD",
-                            ArithmeticOp::Sub => "SUB",
-                            ArithmeticOp::Xor => "XOR",
-                        })
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    let regs_str = registers
-                        .iter()
-                        .map(|r| format!("R{r}"))
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    (
-                        format!(
-                            "#{execution_order} Arithmetic<br/>[{ops_str}]<br/>Regs: {regs_str}"
-                        ),
-                        "arithmetic",
-                    )
-                }
-                Transformation::MemoryScramble { addresses, pattern } => (
-                    format!(
-                        "#{execution_order} Memory Scramble<br/>{} addrs<br/>Pattern: 0x{:08X}",
-                        addresses.len(),
-                        pattern
-                    ),
-                    "memory",
-                ),
-                Transformation::ConditionalJump {
-                    condition_regs,
-                    jump_targets,
-                } => (
-                    format!(
-                        "#{execution_order} Conditional Jump<br/>R{} vs R{}<br/>{} targets",
-                        condition_regs.0,
-                        condition_regs.1,
-                        jump_targets.len()
-                    ),
-                    "jump",
-                ),
-                Transformation::EncryptionRound { key_addr, rounds } => (
-                    format!(
-                        "#{execution_order} Encryption<br/>{rounds} rounds<br/>Key@0x{key_addr:08X}"
-                    ),
-                    "encryption",
-                ),
-                Transformation::RegisterShuffle { mapping } => {
-                    let shuffle_str = mapping
-                        .iter()
-                        .map(|(src, dst)| format!("R{src}→R{dst}"))
-                        .collect::<Vec<_>>()
-                        .join("<br/>");
-                    (
-                        format!("#{execution_order} Register Shuffle<br/>{shuffle_str}"),
-                        "shuffle",
-                    )
-                }
-            };
-
-            writeln!(f, "    T{i}[\"{transform_label}\"]:::{class}")?;
-            writeln!(f, "    S{input_id} --> T{i}")?;
-            writeln!(f, "    T{i} --> S{output_id}")?;
-        }
-
-        // Add execution sequence arrows between transformations
-        writeln!(f)?;
-        writeln!(f, "    %% Execution sequence")?;
-        for i in 0..self.transformations.len().saturating_sub(1) {
-            writeln!(f, "    T{i} -.-> T{}", i + 1)?;
-        }
-
-        // Add final output node if we have transformations
-        if !self.transformations.is_empty() {
-            writeln!(f)?;
-            writeln!(f, "    FINAL[\"Final Output<br/>256-bit result\"]:::state")?;
-
-            // Connect the last transformation's output to final output
-            if let Some(last_entry) = self.transformations.last() {
-                let output_hash = hash_state(*last_entry.output_state());
-                let output_id = state_map[&output_hash];
-                writeln!(f, "    S{output_id} --> FINAL")?;
-            }
-        }
-
-        Ok(())
     }
-}
-
-/// Create a simple hash of a register state for deduplication
-fn hash_state(state: [u32; 8]) -> u64 {
-    let mut hash = 0u64;
-    for (i, &val) in state.iter().enumerate() {
-        hash = hash
-            .wrapping_mul(31)
-            .wrapping_add(val as u64)
-            .wrapping_add(i as u64);
-    }
-    hash
-}
-
-/// Format a register state for display
-fn format_state(state: [u32; 8]) -> String {
-    format!(
-        "R0-7: {:08X} {:08X}<br/>{:08X} {:08X}<br/>{:08X} {:08X}<br/>{:08X} {:08X}",
-        state[0], state[1], state[2], state[3], state[4], state[5], state[6], state[7]
-    )
 }

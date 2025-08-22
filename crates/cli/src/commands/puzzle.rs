@@ -9,11 +9,10 @@ use color_eyre::eyre::bail;
 use color_eyre::Result;
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
-use tracing::info;
 
 use nomad_puzzle::PuzzleGenerator;
 
-use crate::config::Config;
+use nomad_node::config::Config;
 
 #[derive(ValueEnum, Clone, Default, PartialEq, Eq)]
 pub enum OutputFormat {
@@ -66,12 +65,7 @@ impl PuzzleArgs {
         let seed_bytes = Sha256::digest(seed.to_be_bytes());
         let rng = StdRng::from_seed(seed_bytes.into());
 
-        info!(
-            seed,
-            depth = self.depth,
-            max_instructions = self.max_instructions,
-            "Generating puzzle"
-        );
+        eprintln!("Generating puzzle (seed={seed}, depth={})", self.depth);
 
         let mut generator = PuzzleGenerator::new(self.depth, self.max_instructions, rng);
         let writer = &mut writer(self.out)?;
@@ -122,4 +116,3 @@ fn parse_hex_bytes(s: &str) -> Result<[u8; 32]> {
     result.copy_from_slice(&bytes);
     Ok(result)
 }
-

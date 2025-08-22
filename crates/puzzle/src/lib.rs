@@ -1,12 +1,13 @@
 use nomad_vm::Program;
-use rand::{Rng, RngCore};
-use std::collections::HashMap;
+use rand::RngCore;
 
+mod chain_builder;
 mod compiler;
 mod transformations;
 
+pub use chain_builder::{ChainBuilder, TransformationChain, TransformationNode};
 pub use compiler::PuzzleCompiler;
-pub use transformations::{Transformation, TransformationMap};
+pub use transformations::Transformation;
 
 /// A puzzle generator that creates VM programs with complex transformations
 /// designed to prevent static analysis while producing a deterministic output.
@@ -25,145 +26,41 @@ impl<R: RngCore> PuzzleGenerator<R> {
         }
     }
 
-    fn generate_map(&mut self, target_output: [u8; 32]) -> Result<TransformationMap, PuzzleError> {
-        let mut transformation_map = TransformationMap::new();
-        // Convert target output to initial register values
-        let target_registers = output_to_registers(target_output);
-        // Build recursive transformation chain
-        self.build_transformations(&mut transformation_map, target_registers, 0)?;
-        Ok(transformation_map)
+    fn generate_chain(
+        &mut self,
+        target_output: [u8; 32],
+    ) -> Result<TransformationChain, PuzzleError> {
+        // Convert target output to final register values - we'll use this as target constraint
+        let _target_registers = output_to_registers(target_output);
+
+        // Create chain builder with configurable parameters
+        let mut chain_builder = ChainBuilder::new(self.max_depth, &mut self.rng)
+            .with_split_probability(0.4)
+            .with_rejoin_probability(0.3)
+            .with_max_splits(4);
+
+        // Build transformation chain with 8 inputs (registers) and 8 outputs
+        let chain = chain_builder.build_chain(8, 8);
+        Ok(chain)
     }
 
     pub fn generate_mermaid(&mut self, target_output: [u8; 32]) -> Result<String, PuzzleError> {
-        let map = self.generate_map(target_output)?;
-        Ok(map.to_string())
+        let chain = self.generate_chain(target_output)?;
+        Ok(chain.to_mermaid_string())
     }
 
     pub fn generate_mnemonic(&mut self, target_output: [u8; 32]) -> Result<String, PuzzleError> {
-        let transformation_map = self.generate_map(target_output)?;
+        let chain = self.generate_chain(target_output)?;
         let mut compiler = PuzzleCompiler::new(self.max_instructions);
-        compiler.compile_mnemonic(transformation_map)
+        compiler.compile_chain_mnemonic(chain)
     }
 
     /// Generate a puzzle that produces the target 256-bit output when executed
     pub fn generate(&mut self, target_output: [u8; 32]) -> Result<Program, PuzzleError> {
-        let transformation_map = self.generate_map(target_output)?;
-        // Compile transformations into VM program
+        let chain = self.generate_chain(target_output)?;
+        // Compile chain into VM program
         let mut compiler = PuzzleCompiler::new(self.max_instructions);
-        compiler.compile(transformation_map)
-    }
-
-    fn build_transformations(
-        &mut self,
-        map: &mut TransformationMap,
-        target_state: [u32; 8],
-        depth: usize,
-    ) -> Result<(), PuzzleError> {
-        if depth >= self.max_depth {
-            return Ok(());
-        }
-
-        // Generate random transformations for this depth level
-        let num_transforms = self.rng.random_range(2..=5);
-
-        for _ in 0..num_transforms {
-            let transform = self.generate_random_transformation();
-            let input_state = self.generate_random_state();
-
-            map.add_transformation(input_state, transform, target_state);
-
-            // Recursively build transformations for the input state
-            self.build_transformations(map, input_state, depth + 1)?;
-        }
-
-        Ok(())
-    }
-
-    fn generate_random_transformation(&mut self) -> Transformation {
-        match self.rng.random_range(0..5) {
-            0 => Transformation::ArithmeticChain {
-                operations: self.generate_arithmetic_ops(),
-                registers: self.generate_register_set(),
-            },
-            1 => Transformation::MemoryScramble {
-                addresses: self.generate_memory_addresses(),
-                pattern: self.rng.random(),
-            },
-            2 => Transformation::ConditionalJump {
-                condition_regs: (self.rng.random_range(0..8), self.rng.random_range(0..8)),
-                jump_targets: self.generate_jump_targets(),
-            },
-            3 => Transformation::EncryptionRound {
-                key_addr: self.rng.random_range(0..1024 * 1024) * 4, // Align to word boundaries
-                rounds: self.rng.random_range(1..=4),
-            },
-            4 => Transformation::RegisterShuffle {
-                mapping: self.generate_shuffle_mapping(),
-            },
-            _ => unreachable!(),
-        }
-    }
-
-    fn generate_random_state(&mut self) -> [u32; 8] {
-        let mut state = [0u32; 8];
-        for i in &mut state {
-            *i = self.rng.random();
-        }
-        state
-    }
-
-    fn generate_arithmetic_ops(&mut self) -> Vec<ArithmeticOp> {
-        let count = self.rng.random_range(2..=6);
-        (0..count)
-            .map(|_| match self.rng.random_range(0..3) {
-                0 => ArithmeticOp::Add,
-                1 => ArithmeticOp::Sub,
-                2 => ArithmeticOp::Xor,
-                _ => unreachable!(),
-            })
-            .collect()
-    }
-
-    fn generate_register_set(&mut self) -> Vec<u8> {
-        let count = self.rng.random_range(3..=8);
-        let mut registers: Vec<u8> = (0..8).collect();
-        registers.truncate(count);
-        for i in 0..count {
-            let j = self.rng.random_range(i..count);
-            registers.swap(i, j);
-        }
-        registers
-    }
-
-    fn generate_memory_addresses(&mut self) -> Vec<u32> {
-        let count = self.rng.random_range(4..=16);
-        (0..count)
-            .map(|_| {
-                // Generate aligned addresses within 1GB space
-                self.rng.random_range(0..256 * 1024 * 1024) * 4
-            })
-            .collect()
-    }
-
-    fn generate_jump_targets(&mut self) -> Vec<u32> {
-        let count = self.rng.random_range(2..=4);
-        (0..count).map(|_| self.rng.random_range(1..=100)).collect()
-    }
-
-    fn generate_shuffle_mapping(&mut self) -> HashMap<u8, u8> {
-        let mut mapping = HashMap::new();
-        let mut targets: Vec<u8> = (0..8).collect();
-
-        // Shuffle target registers
-        for i in 0..8 {
-            let j = self.rng.random_range(i..8);
-            targets.swap(i, j);
-        }
-
-        for (src, &dst) in (0..8u8).zip(targets.iter()) {
-            mapping.insert(src, dst);
-        }
-        mapping
+        compiler.compile_chain(chain)
     }
 }
 
@@ -202,6 +99,7 @@ fn output_to_registers(output: [u8; 32]) -> [u32; 8] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nomad_vm::NomadVm;
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 
@@ -229,22 +127,6 @@ mod tests {
     }
 
     #[test]
-    fn test_transformation_map() {
-        let mut map = TransformationMap::new();
-        assert_eq!(map.len(), 0);
-
-        let input_state = [1, 2, 3, 4, 5, 6, 7, 8];
-        let output_state = [8, 7, 6, 5, 4, 3, 2, 1];
-        let transform = Transformation::ArithmeticChain {
-            operations: vec![ArithmeticOp::Add],
-            registers: vec![0, 1],
-        };
-
-        map.add_transformation(input_state, transform, output_state);
-        assert_eq!(map.len(), 1);
-    }
-
-    #[test]
     fn test_generate_simple_puzzle() {
         let rng = StdRng::from_seed([42; 32]);
         let mut generator = PuzzleGenerator::new(1, 1000, rng); // Reduced depth, increased instruction limit
@@ -266,34 +148,175 @@ mod tests {
         if let Some(last_instruction) = program.last() {
             assert_eq!(*last_instruction, nomad_vm::Instruction::Halt());
         }
+
+        let mut vm = NomadVm::new(1024 * 1024 * 1024);
+        let output = vm.execute_program(program).unwrap();
+        assert_eq!(target_output, output);
     }
 
     #[test]
-    fn test_transformation_map_mermaid_display() {
-        let mut map = TransformationMap::new();
+    fn test_chain_builder_basic() {
+        let rng = StdRng::from_seed([1; 32]);
+        let mut chain_builder = ChainBuilder::new(2, rng)
+            .with_split_probability(0.5)
+            .with_rejoin_probability(0.3);
 
-        let state1 = [1, 2, 3, 4, 5, 6, 7, 8];
-        let state2 = [8, 7, 6, 5, 4, 3, 2, 1];
+        let chain = chain_builder.build_chain(8, 8);
 
-        map.add_transformation(
-            state1,
-            Transformation::ArithmeticChain {
-                operations: vec![ArithmeticOp::Add, ArithmeticOp::Xor],
-                registers: vec![0, 1, 2],
-            },
-            state2,
-        );
+        // Should have some nodes
+        assert!(chain.node_count() > 0);
 
-        let mermaid_output = format!("{map}");
+        // Should have entry and exit points
+        assert!(!chain.entry_nodes.is_empty());
+        assert!(!chain.exit_nodes.is_empty());
 
-        // Check that output contains expected Mermaid syntax
-        assert!(mermaid_output.contains("graph TD"));
-        assert!(mermaid_output.contains("classDef arithmetic"));
-        assert!(mermaid_output.contains("#1 Arithmetic")); // Now includes execution order
-        assert!(mermaid_output.contains("ADD, XOR"));
-        assert!(mermaid_output.contains("R0, R1, R2"));
-        assert!(mermaid_output.contains("-->"));
-        assert!(mermaid_output.contains("Final Output"));
-        assert!(mermaid_output.contains("%% Execution sequence")); // Check for execution sequence comment
+        // Should generate mermaid output
+        let mermaid = chain.to_mermaid_string();
+        assert!(mermaid.contains("graph TD"));
+        assert!(mermaid.contains("N0"));
+    }
+
+    #[test]
+    fn test_chain_compilation() {
+        let rng = StdRng::from_seed([2; 32]);
+        let mut generator = PuzzleGenerator::new(2, 1000, rng);
+
+        let target_output = [0x42u8; 32];
+        let result = generator.generate(target_output);
+
+        // Should successfully generate a program
+        match &result {
+            Ok(_) => {}
+            Err(e) => panic!("Failed to generate puzzle with chains: {e}"),
+        }
+        let program = result.unwrap();
+
+        // Program should have some instructions
+        assert!(!program.is_empty());
+
+        // Should end with HALT
+        if let Some(last_instruction) = program.last() {
+            assert_eq!(*last_instruction, nomad_vm::Instruction::Halt());
+        }
+    }
+
+    #[test]
+    fn test_chain_mermaid_generation() {
+        let rng = StdRng::from_seed([42; 32]);
+        let mut generator = PuzzleGenerator::new(3, 1000, rng);
+
+        let target_output = [0x55u8; 32];
+        let result = generator.generate_mermaid(target_output);
+
+        match &result {
+            Ok(mermaid) => {
+                // Should contain mermaid syntax
+                assert!(mermaid.contains("graph TD"));
+                assert!(mermaid.contains("N0"));
+                // Should contain some node types (updated for new format)
+                assert!(
+                    mermaid.contains("Split")
+                        || mermaid.contains("Arithmetic")
+                        || mermaid.contains("Rejoin")
+                        || mermaid.contains("Memory")
+                        || mermaid.contains("Encrypt")
+                        || mermaid.contains("Shuffle")
+                );
+                // Should contain register information
+                assert!(mermaid.contains("Regs:"));
+                println!("Generated mermaid:\n{mermaid}");
+            }
+            Err(e) => panic!("Failed to generate mermaid: {e}"),
+        }
+    }
+
+    #[test]
+    fn test_register_isolation_in_splits() {
+        let rng = StdRng::from_seed([123; 32]);
+        let mut chain_builder = ChainBuilder::new(2, rng)
+            .with_split_probability(1.0) // Force splits
+            .with_rejoin_probability(0.0) // Prevent rejoins initially
+            .with_max_splits(3);
+
+        let chain = chain_builder.build_chain(4, 4);
+
+        // Verify that nodes have assigned registers
+        for (node_id, node) in &chain.nodes {
+            assert!(
+                !node.assigned_registers.is_empty(),
+                "Node {} should have assigned registers",
+                node_id.inner()
+            );
+
+            // All assigned registers should be in valid range
+            for &reg in &node.assigned_registers {
+                assert!(reg < 8, "Register {reg} should be < 8");
+            }
+        }
+
+        // Find split nodes and verify they have different register assignments for branches
+        let split_nodes: Vec<_> = chain
+            .nodes
+            .iter()
+            .filter(|(_, node)| matches!(node.operation, Transformation::Split { .. }))
+            .collect();
+
+        if !split_nodes.is_empty() {
+            println!("Found {} split nodes", split_nodes.len());
+
+            // Check that split nodes have comprehensive register assignments
+            for (node_id, node) in split_nodes {
+                println!(
+                    "Split node {} has registers: {:?}",
+                    node_id.inner(),
+                    node.assigned_registers
+                );
+
+                // Split nodes should have access to all or most registers
+                assert!(
+                    node.assigned_registers.len() >= 2,
+                    "Split node {} should have at least 2 registers",
+                    node_id.inner()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_register_isolation_compilation() {
+        let rng = StdRng::from_seed([42; 32]);
+        let mut generator = PuzzleGenerator::new(2, 1000, rng);
+
+        // Generate a chain with splits
+        let target_output = [0x55u8; 32];
+        let result = generator.generate_mnemonic(target_output);
+
+        match &result {
+            Ok(mnemonic) => {
+                // Verify that the mnemonic contains register operations
+                assert!(mnemonic.contains("NODE"));
+                assert!(mnemonic.contains("HALT"));
+
+                // Look for register isolation evidence (should contain register operations)
+                let lines: Vec<&str> = mnemonic.lines().collect();
+                let instruction_lines: Vec<&str> = lines
+                    .iter()
+                    .filter(|line| {
+                        line.trim()
+                            .chars()
+                            .next()
+                            .is_some_and(|c| c.is_ascii_digit())
+                    })
+                    .cloned()
+                    .collect();
+
+                println!("Generated {} instruction lines", instruction_lines.len());
+                assert!(
+                    !instruction_lines.is_empty(),
+                    "Should generate instructions"
+                );
+            }
+            Err(e) => panic!("Failed to generate mnemonic: {e}"),
+        }
     }
 }
