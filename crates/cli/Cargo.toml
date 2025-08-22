@@ -18,6 +18,7 @@ nomad-vm = { path = "../vm" }
 
 alloy.workspace = true
 futures.workspace = true
+paste.workspace = true
 serde.workspace = true
 tokio.workspace = true
 tracing.workspace = true

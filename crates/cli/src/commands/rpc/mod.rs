@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use alloy::signers::local::PrivateKeySigner;
 use clap::{Parser, Subcommand};
 use color_eyre::eyre::Result;
@@ -16,6 +18,14 @@ pub struct RpcArgs {
     pub url: Option<Url>,
     #[command(subcommand)]
     pub cmd: RpcCommand,
+}
+
+impl Display for RpcArgs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.cmd {
+            RpcCommand::Signal(_) => f.write_str("rpc_signal"),
+        }
+    }
 }
 
 #[derive(Subcommand)]
