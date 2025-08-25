@@ -24,6 +24,7 @@ Nomad/
 ├── crates/
 │   ├── cli/        Command-line interface and main binary
 │   ├── ethereum/   Ethereum integration and proof generation
+│   ├── node/       Full node implementation
 │   ├── p2p/        Peer-to-peer networking
 │   ├── pool/       Signal pool implementation
 │   ├── rpc/        RPC server implementation
