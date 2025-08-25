@@ -1,0 +1,26 @@
+[package]
+name = "nomad-node"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+[dependencies]
+nomad-ethereum = { path = "../ethereum" }
+nomad-p2p = { path = "../p2p" }
+nomad-pool = { path = "../pool" }
+nomad-rpc = { path = "../rpc" }
+nomad-types = { path = "../types" }
+nomad-vm = { path = "../vm" }
+
+alloy.workspace = true
+eyre.workspace = true
+serde.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+chrono = { version = "0.4", features = ["clock", "std"] }
+reqwest = { version = "0.12", features = ["json"] }
+resolve-path = "0.1"
+toml = "0.9"
+opentelemetry = "0.30"
+

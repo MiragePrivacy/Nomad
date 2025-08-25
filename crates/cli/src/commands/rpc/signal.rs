@@ -1,10 +1,11 @@
 use alloy::primitives::{Address, U256};
 use clap::Parser;
 use color_eyre::eyre::{Context, Result};
-use nomad_rpc::{HttpClient, MirageRpcClient};
-use nomad_types::Signal;
 use reqwest::Url;
 use tracing::info;
+
+use nomad_rpc::{HttpClient, MirageRpcClient};
+use nomad_types::Signal;
 
 #[derive(Parser)]
 pub struct SignalArgs {

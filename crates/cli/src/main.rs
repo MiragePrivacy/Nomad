@@ -21,8 +21,9 @@ use tracing_subscriber::{
 };
 use workspace_filter::workspace_filter;
 
+use nomad_node::config::Config;
+
 mod commands;
-mod config;
 
 #[derive(Parser)]
 #[command(author, version, about)]
@@ -59,7 +60,7 @@ pub(crate) struct Cli {
 impl Cli {
     /// Run the app
     async fn execute(self) -> Result<()> {
-        let config = config::Config::load(&self.config)?;
+        let config = Config::load(&self.config)?;
         self.setup_logging(&config).await?;
         let signers = self.build_signers()?;
         self.cmd.execute(config, signers).await
@@ -86,7 +87,7 @@ impl Cli {
     }
 
     /// Get and log global ip address
-    async fn global_ip(&self, config: &config::Config) -> Result<Option<IpAddr>> {
+    async fn global_ip(&self, config: &Config) -> Result<Option<IpAddr>> {
         if config.otlp.url.is_some() || matches!(self.cmd, commands::Command::Run(_)) {
             if let Ok(res) = reqwest::get("https://ifconfig.me/ip").await {
                 if let Ok(remote_ip) = res.text().await {
@@ -98,7 +99,7 @@ impl Cli {
     }
 
     // Setup logging filters and subscriber
-    pub async fn setup_logging(&self, config: &config::Config) -> Result<()> {
+    pub async fn setup_logging(&self, config: &Config) -> Result<()> {
         // Setup console logging
         let filter = std::env::var("RUST_LOG").unwrap_or_else(|_| {
             // Default which is directed by the verbosity flag

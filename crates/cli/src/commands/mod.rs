@@ -5,7 +5,7 @@ use clap::Subcommand;
 use color_eyre::Result;
 use paste::paste;
 
-use crate::config::Config;
+use nomad_node::config::Config;
 
 macro_rules! impl_command {
     {

@@ -1,6 +1,6 @@
 use std::{collections::HashMap, path::PathBuf};
 
-use color_eyre::{eyre::bail, Result};
+use eyre::{bail, Result};
 use reqwest::Url;
 use resolve_path::PathResolveExt;
 use serde::{Deserialize, Serialize};

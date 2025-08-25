@@ -3642,18 +3642,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "241eaef5fd12c88705a01fc1066c48c4b36e0dd4377dcdc7ec3942cea7a69956"
 
 [[package]]
-name = "local-ip-address"
-version = "0.6.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "656b3b27f8893f7bbf9485148ff9a65f019e3f33bd5cdc87c83cab16b3fd9ec8"
-dependencies = [
- "libc",
- "neli",
- "thiserror 2.0.14",
- "windows-sys 0.59.0",
-]
-
-[[package]]
 name = "lock_api"
 version = "0.4.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3855,31 +3843,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "neli"
-version = "0.6.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "93062a0dce6da2517ea35f301dfc88184ce18d3601ec786a727a87bf535deca9"
-dependencies = [
- "byteorder",
- "libc",
- "log",
- "neli-proc-macros",
-]
-
-[[package]]
-name = "neli-proc-macros"
-version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c8034b7fbb6f9455b2a96c19e6edf8dc9fc34c70449938d8ee3b4df363f61fe"
-dependencies = [
- "either",
- "proc-macro2",
- "quote",
- "serde",
- "syn 1.0.109",
-]
-
-[[package]]
 name = "netlink-packet-core"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3975,18 +3938,13 @@ name = "nomad-cli"
 version = "0.1.0"
 dependencies = [
  "alloy",
- "chrono",
  "clap",
  "color-eyre",
- "futures",
  "hostname",
- "local-ip-address",
  "nomad-ethereum",
- "nomad-p2p",
- "nomad-pool",
+ "nomad-node",
  "nomad-rpc",
  "nomad-types",
- "nomad-vm",
  "opentelemetry",
  "opentelemetry-appender-tracing",
  "opentelemetry-otlp",
@@ -3994,10 +3952,7 @@ dependencies = [
  "opentelemetry_sdk",
  "paste",
  "reqwest",
- "resolve-path",
- "serde",
  "tokio",
- "toml 0.9.5",
  "tracing",
  "tracing-error",
  "tracing-opentelemetry",
@@ -4019,6 +3974,28 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
+]
+
+[[package]]
+name = "nomad-node"
+version = "0.1.0"
+dependencies = [
+ "alloy",
+ "chrono",
+ "eyre",
+ "nomad-ethereum",
+ "nomad-p2p",
+ "nomad-pool",
+ "nomad-rpc",
+ "nomad-types",
+ "nomad-vm",
+ "opentelemetry",
+ "reqwest",
+ "resolve-path",
+ "serde",
+ "tokio",
+ "toml 0.9.5",
+ "tracing",
 ]
 
 [[package]]

@@ -2,8 +2,8 @@ use alloy::{primitives::Address, signers::local::PrivateKeySigner};
 use clap::Parser;
 use color_eyre::Result;
 
-use crate::config::Config;
 use nomad_ethereum::EthClient;
+use nomad_node::config::Config;
 
 #[derive(Parser)]
 pub struct FaucetArgs {

@@ -6,7 +6,7 @@ use color_eyre::eyre::Result;
 use nomad_rpc::HttpClient;
 use reqwest::Url;
 
-use crate::config::Config;
+use nomad_node::config::Config;
 
 mod signal;
 
