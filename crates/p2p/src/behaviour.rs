@@ -11,7 +11,7 @@ use libp2p::{
     swarm::{dummy, NetworkBehaviour, ToSwarm},
     Multiaddr, PeerId, StreamProtocol,
 };
-use nomad_types::Signal;
+use nomad_types::SignalPayload;
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::{shutdown::Shutdown, P2pConfig, MIRAGE_DISCOVERY_ID, MIRAGE_MESHSUB_ID};
@@ -71,18 +71,18 @@ impl MirageBehavior {
 /// Simple event wrapper around the incoming signal channel
 #[derive(Default)]
 pub struct SignalBehavior {
-    rx: Option<UnboundedReceiver<Signal>>,
+    rx: Option<UnboundedReceiver<SignalPayload>>,
 }
 
 impl SignalBehavior {
-    pub fn connect_rx(&mut self, rx: UnboundedReceiver<Signal>) {
+    pub fn connect_rx(&mut self, rx: UnboundedReceiver<SignalPayload>) {
         self.rx = Some(rx);
     }
 }
 
 impl NetworkBehaviour for SignalBehavior {
     type ConnectionHandler = dummy::ConnectionHandler;
-    type ToSwarm = Signal;
+    type ToSwarm = SignalPayload;
 
     fn handle_established_inbound_connection(
         &mut self,

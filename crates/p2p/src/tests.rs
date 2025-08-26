@@ -5,7 +5,7 @@ use std::{
 };
 
 use nomad_pool::SignalPool;
-use nomad_types::primitives::U256;
+use nomad_types::{primitives::U256, SignalPayload};
 use tokio::sync::mpsc::unbounded_channel;
 use tracing::{info, Level};
 
@@ -94,7 +94,7 @@ async fn bootstrap_and_propagate_signal() -> eyre::Result<()> {
 
     // Test sending a signal to each node
     for i in 0..=2 {
-        let signal = nomad_types::Signal {
+        let signal = SignalPayload::Unencrypted(nomad_types::Signal {
             escrow_contract: [i; 20].into(),
             token_contract: [i; 20].into(),
             recipient: [i; 20].into(),
@@ -102,7 +102,7 @@ async fn bootstrap_and_propagate_signal() -> eyre::Result<()> {
             reward_amount: U256::from(1234),
             acknowledgement_url: String::new(),
             selector_mapping: Default::default(),
-        };
+        });
 
         // Send signal to p2p node to broadcast and index
         txs[i as usize].send(signal.clone()).unwrap();

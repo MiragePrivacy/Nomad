@@ -1,12 +1,43 @@
-mod selectors;
-pub use selectors::*;
-
-use alloy::primitives::{Address, U256};
-use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
+
+use alloy::{
+    primitives::{Address, Bytes, U256},
+    transports::http::reqwest::Url,
+};
+use serde::{Deserialize, Serialize};
 
 pub use alloy::primitives;
 
+mod selectors;
+pub use selectors::*;
+
+/// Top level enum for encrypted and legacy unencrypted signals
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq, Hash)]
+#[serde(untagged)]
+pub enum SignalPayload {
+    Encrypted(EncryptedSignal),
+    Unencrypted(Signal),
+}
+
+impl SignalPayload {
+    pub fn token_contract(&self) -> Address {
+        match self {
+            SignalPayload::Encrypted(EncryptedSignal { token_contract, .. })
+            | SignalPayload::Unencrypted(Signal { token_contract, .. }) => *token_contract,
+        }
+    }
+}
+
+/// Fully encrypted signal containing the puzzle and relay address
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct EncryptedSignal {
+    pub token_contract: Address,
+    pub relay: Url,
+    pub puzzle: Bytes,
+    pub data: Bytes,
+}
+
+/// Decrypted signal
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq)]
 pub struct Signal {
     pub escrow_contract: Address,

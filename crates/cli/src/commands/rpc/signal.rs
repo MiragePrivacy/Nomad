@@ -5,7 +5,7 @@ use reqwest::Url;
 use tracing::info;
 
 use nomad_rpc::{HttpClient, MirageRpcClient};
-use nomad_types::Signal;
+use nomad_types::{SignalPayload, Signal};
 
 #[derive(Parser)]
 pub struct SignalArgs {
@@ -41,7 +41,7 @@ impl From<SignalArgs> for Signal {
 impl SignalArgs {
     pub async fn execute(self, client: HttpClient) -> Result<()> {
         let res = client
-            .signal(self.into())
+            .signal(SignalPayload::Unencrypted(self.into()))
             .await
             .context("failed to submit signal to rpc")?;
         info!("{res}");

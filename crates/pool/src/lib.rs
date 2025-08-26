@@ -6,7 +6,7 @@ use std::{
 use scc::{Bag, HashCache};
 use tokio::sync::Notify;
 
-use nomad_types::Signal;
+use nomad_types::SignalPayload;
 
 /// Concurrent, lock-free, and unordered signal pool.
 ///
@@ -17,7 +17,7 @@ pub struct SignalPool {
     /// Cache containing hashes of signals for rejecting duplicates
     cache: Arc<HashCache<u64, ()>>,
     /// Concurrent, lock-free, and unordered container.
-    bag: Arc<Bag<Signal>>,
+    bag: Arc<Bag<SignalPayload>>,
     /// Notify handle for awaiting first signals
     notify: Arc<Notify>,
     /// Maximum size bag is allowed to grow to
@@ -36,7 +36,7 @@ impl SignalPool {
     }
 
     /// Insert a signal into the pool, returning true if not duplicated
-    pub async fn insert(&self, signal: Signal) -> bool {
+    pub async fn insert(&self, signal: SignalPayload) -> bool {
         // Hash signal and insert into cache
         let hasher = &mut std::hash::DefaultHasher::new();
         signal.hash(hasher);
@@ -60,7 +60,7 @@ impl SignalPool {
     }
 
     /// Sample and remove a random signal from the pool, waiting if no items are available
-    pub async fn sample(&self) -> Signal {
+    pub async fn sample(&self) -> SignalPayload {
         if self.bag.is_empty() {
             self.notify.notified().await;
         }

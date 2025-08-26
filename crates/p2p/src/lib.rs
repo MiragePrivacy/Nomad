@@ -15,7 +15,7 @@ use tokio::{sync::mpsc::UnboundedReceiver, task::JoinHandle};
 use tracing::{debug, info, info_span, warn, Instrument};
 
 use nomad_pool::SignalPool;
-use nomad_types::Signal;
+use nomad_types::SignalPayload;
 
 use crate::{behaviour::MirageBehaviorEvent, shutdown::Shutdown};
 
@@ -59,7 +59,7 @@ impl P2pNode {
         config: P2pConfig,
         signal_pool: SignalPool,
         read_only: Arc<AtomicBool>,
-        rx: Option<UnboundedReceiver<Signal>>,
+        rx: Option<UnboundedReceiver<SignalPayload>>,
     ) -> eyre::Result<Self> {
         debug!(?config, ?read_only);
 

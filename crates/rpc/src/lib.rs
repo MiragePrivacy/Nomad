@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::{debug, info, instrument};
 
-use nomad_types::Signal;
+use nomad_types::SignalPayload;
 
 pub use jsonrpsee::http_client::HttpClient;
 
@@ -22,19 +22,19 @@ impl Default for RpcConfig {
 #[rpc(server, client, namespace = "mirage")]
 pub trait MirageRpc {
     #[method(name = "signal")]
-    async fn signal(&self, message: Signal) -> Result<String, ErrorObjectOwned>;
+    async fn signal(&self, message: SignalPayload) -> Result<String, ErrorObjectOwned>;
 }
 
 struct MirageServer {
-    signal_tx: UnboundedSender<Signal>,
+    signal_tx: UnboundedSender<SignalPayload>,
 }
 
 #[async_trait]
 impl MirageRpcServer for MirageServer {
     #[instrument(skip(self), name = "rpc:signal")]
-    async fn signal(&self, message: Signal) -> Result<String, ErrorObjectOwned> {
+    async fn signal(&self, message: SignalPayload) -> Result<String, ErrorObjectOwned> {
         info!("Received");
-        if self.signal_tx.send(message.clone()).is_err() {
+        if self.signal_tx.send(message).is_err() {
             return Err(ErrorObjectOwned::owned(
                 500,
                 "Failed to broadcast signal",
@@ -42,13 +42,13 @@ impl MirageRpcServer for MirageServer {
             ));
         }
 
-        Ok(format!("Signal acknowledged: {message}"))
+        Ok("Signal acknowledged".into())
     }
 }
 
 pub async fn spawn_rpc_server(
     config: RpcConfig,
-    signal_tx: UnboundedSender<Signal>,
+    signal_tx: UnboundedSender<SignalPayload>,
 ) -> eyre::Result<()> {
     debug!(?config);
     let server = Server::builder().build(("0.0.0.0", config.port)).await?;

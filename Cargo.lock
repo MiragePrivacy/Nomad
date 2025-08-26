@@ -3980,6 +3980,7 @@ dependencies = [
 name = "nomad-node"
 version = "0.1.0"
 dependencies = [
+ "aes-gcm",
  "alloy",
  "chrono",
  "eyre",
@@ -3993,6 +3994,7 @@ dependencies = [
  "reqwest",
  "resolve-path",
  "serde",
+ "sha2",
  "tokio",
  "toml 0.9.5",
  "tracing",
@@ -4042,6 +4044,7 @@ name = "nomad-types"
 version = "0.1.0"
 dependencies = [
  "alloy",
+ "eyre",
  "paste",
  "serde",
  "tracing",
