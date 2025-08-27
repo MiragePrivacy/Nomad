@@ -135,6 +135,7 @@ impl EthClient {
         if log_idx >= target_receipt.logs().len() as u64 {
             return Err(ProofError::LogIndexOutOfBounds.into());
         }
+        trace!(log_idx, logs = ?target_receipt.logs());
         let proof_target_log = target_receipt.logs()[log_idx as usize].clone();
         // Ensure the target_log from RPC receipt matches the one from consensus receipt
         if target_log.address() != proof_target_log.address
