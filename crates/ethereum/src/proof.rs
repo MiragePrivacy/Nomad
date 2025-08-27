@@ -42,7 +42,7 @@ impl EthClient {
         receipt: &TransactionReceipt,
     ) -> Result<Escrow::ReceiptProof, ClientError> {
         // Locate transfer event in the receipt logs
-        let Some((log_idx, target_log)) = receipt.logs().iter().enumerate().find(|(_, log)| {
+        let Some(target_log) = receipt.logs().iter().find(|log| {
             log.log_decode::<IERC20::Transfer>()
                 .map(|log| {
                     log.address() == signal.token_contract
@@ -51,6 +51,9 @@ impl EthClient {
                 })
                 .unwrap_or(false)
         }) else {
+            return Err(ProofError::LogNotFound.into());
+        };
+        let Some(log_idx) = target_log.log_index else {
             return Err(ProofError::LogNotFound.into());
         };
 
@@ -126,18 +129,6 @@ impl EthClient {
         // Encode the target receipt for inclusion in proof
         let mut receipt_encoded = Vec::new();
         target_receipt.encode_2718(&mut receipt_encoded);
-
-        // Validate log index if provided and extract target log
-        if log_idx >= target_receipt.logs().len() {
-            return Err(ProofError::LogIndexOutOfBounds.into());
-        }
-        let proof_target_log = target_receipt.logs()[log_idx].clone();
-        // Ensure the target_log from RPC receipt matches the one from consensus receipt
-        if target_log.address() != proof_target_log.address
-            || target_log.data() != &proof_target_log.data
-        {
-            return Err(ProofError::LogMismatch.into());
-        }
 
         // Encode receipt path
         let mut path_buffer = Vec::new();
