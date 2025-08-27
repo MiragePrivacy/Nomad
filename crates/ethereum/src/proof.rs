@@ -17,6 +17,8 @@ use crate::{ClientError, Escrow, EthClient, IERC20};
 pub enum ProofError {
     #[error("Transaction not found")]
     TransactionNotFound,
+    #[error("Log not found in receipt")]
+    LogNotFound,
     #[error("Log out of bounds")]
     LogIndexOutOfBounds,
     #[error("Log mismatched")]
@@ -39,26 +41,20 @@ impl EthClient {
         signal: &Signal,
         receipt: &TransactionReceipt,
     ) -> Result<Escrow::ReceiptProof, ClientError> {
-        // Locate signal transfer event in the receipt logs
-        let mut target_log = None;
-        for raw_log in receipt.logs() {
-            let log = raw_log
-                .log_decode::<IERC20::Transfer>()
-                .map_err(|_| ProofError::Decoding)?;
-            let data = log.data();
-            if log.address() == signal.token_contract
-                && data.to == signal.recipient
-                && data.value == signal.transfer_amount
-            {
-                target_log = Some(raw_log.clone());
-            }
-        }
-        let Some(target_log) = target_log else {
-            return Err(ProofError::LogMismatch.into());
+        // Locate transfer event in the receipt logs
+        let Some((log_idx, target_log)) = receipt.logs().iter().enumerate().find(|(_, log)| {
+            log.log_decode::<IERC20::Transfer>()
+                .map(|log| {
+                    log.address() == signal.token_contract
+                        && log.data().to == signal.recipient
+                        && log.data().value == signal.transfer_amount
+                })
+                .unwrap_or(false)
+        }) else {
+            return Err(ProofError::LogNotFound.into());
         };
-        let Some(log_idx) = target_log.log_index else {
-            return Err(ProofError::LogMismatch.into());
-        };
+
+        trace!(?receipt, "Building proof for log index {log_idx}");
 
         // Get the block, build receipts trie
         let block_hash = receipt.block_hash.unwrap();
@@ -132,11 +128,10 @@ impl EthClient {
         target_receipt.encode_2718(&mut receipt_encoded);
 
         // Validate log index if provided and extract target log
-        if log_idx >= target_receipt.logs().len() as u64 {
+        if log_idx >= target_receipt.logs().len() {
             return Err(ProofError::LogIndexOutOfBounds.into());
         }
-        trace!(log_idx, logs = ?target_receipt.logs());
-        let proof_target_log = target_receipt.logs()[log_idx as usize].clone();
+        let proof_target_log = target_receipt.logs()[log_idx].clone();
         // Ensure the target_log from RPC receipt matches the one from consensus receipt
         if target_log.address() != proof_target_log.address
             || target_log.data() != &proof_target_log.data
