@@ -1,4 +1,7 @@
-use std::{fmt::Debug, time::Duration};
+use std::{
+    fmt::{Debug, Display},
+    time::Duration,
+};
 
 use alloy::{
     network::EthereumWallet,
@@ -35,6 +38,7 @@ sol! {
 
     #[sol(rpc)]
     contract Escrow {
+        #[derive(Deserialize, Serialize)]
         struct ReceiptProof {
             /// RLP-encoded block header
             bytes header;
@@ -51,6 +55,12 @@ sol! {
         function bond(uint256 _bondAmount) public;
         function collect(ReceiptProof calldata proof, uint256 targetBlockNumber) public;
         function is_bonded() public view returns (bool);
+    }
+}
+
+impl Display for Escrow::ReceiptProof {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&serde_json::to_string_pretty(self).unwrap())
     }
 }
 
@@ -90,7 +100,7 @@ type ReadProvider = FillProvider<
 >;
 
 pub struct EthClient {
-    read_provider: ReadProvider,
+    pub read_provider: ReadProvider,
     rpc: String,
     wallet: EthereumWallet,
     accounts: Vec<Address>,

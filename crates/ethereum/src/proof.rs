@@ -38,17 +38,22 @@ impl EthClient {
     ))]
     pub async fn generate_proof(
         &self,
-        signal: &Signal,
+        signal: Option<&Signal>,
         receipt: &TransactionReceipt,
     ) -> Result<Escrow::ReceiptProof, ClientError> {
         // Find the target transfer event and its LOCAL index within the transaction
         let mut log_idx = None;
         for (idx, log) in receipt.logs().iter().enumerate() {
             if let Ok(decoded) = log.log_decode::<IERC20::Transfer>() {
-                if decoded.address() == signal.token_contract
-                    && decoded.data().to == signal.recipient
-                    && decoded.data().value == signal.transfer_amount
-                {
+                let matches_signal = if let Some(signal) = signal {
+                    decoded.address() == signal.token_contract
+                        && decoded.data().to == signal.recipient
+                        && decoded.data().value == signal.transfer_amount
+                } else {
+                    true // If no signal provided, accept any transfer event
+                };
+                
+                if matches_signal {
                     log_idx = Some(idx);
                     break;
                 }

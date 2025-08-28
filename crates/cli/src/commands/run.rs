@@ -16,15 +16,15 @@ pub struct RunArgs {
     /// Multiaddr of a peer to connect to
     #[arg(long)]
     pub peer: Option<String>,
-    /// HTTP RPC URL for sending transactions
-    #[arg(long, env("HTTP_RPC"))]
-    pub http_rpc: Option<Url>,
+    /// ETH RPC URL for sending transactions
+    #[arg(long, env("ETH_RPC"))]
+    pub eth_rpc: Option<Url>,
 }
 
 impl RunArgs {
     pub async fn execute(self, mut config: Config, signers: Vec<PrivateKeySigner>) -> Result<()> {
         // Apply argument overrides to configuration
-        if let Some(rpc) = self.http_rpc.clone() {
+        if let Some(rpc) = self.eth_rpc.clone() {
             config.eth.rpc = rpc;
         }
         if let Some(port) = self.rpc_port {

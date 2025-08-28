@@ -3952,6 +3952,7 @@ dependencies = [
  "opentelemetry_sdk",
  "paste",
  "reqwest",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-error",

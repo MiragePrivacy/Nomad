@@ -164,7 +164,7 @@ async fn process_signal(
         .await?;
 
     info!("Generating transfer proof");
-    let proof = eth_client.generate_proof(&signal, &transfer).await?;
+    let proof = eth_client.generate_proof(Some(&signal), &transfer).await?;
 
     info!("Collecting rewards from escrow");
     let collect = eth_client

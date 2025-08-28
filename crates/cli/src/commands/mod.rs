@@ -52,8 +52,9 @@ impl_command! {
     /// Call RPC methods on a local or remote node.
     #[display = to_string]
     mod rpc;
-    /// Use the faucet functionality on the given token contract. Requires keys.
-    mod faucet;
+    /// Development commands
+    #[display = to_string]
+    mod dev;
 
     pub struct Command;
 }
