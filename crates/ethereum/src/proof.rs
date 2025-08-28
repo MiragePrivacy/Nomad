@@ -41,19 +41,20 @@ impl EthClient {
         signal: &Signal,
         receipt: &TransactionReceipt,
     ) -> Result<Escrow::ReceiptProof, ClientError> {
-        // Locate transfer event in the receipt logs
-        let Some(target_log) = receipt.logs().iter().find(|log| {
-            log.log_decode::<IERC20::Transfer>()
-                .map(|log| {
-                    log.address() == signal.token_contract
-                        && log.data().to == signal.recipient
-                        && log.data().value == signal.transfer_amount
-                })
-                .unwrap_or(false)
-        }) else {
-            return Err(ProofError::LogNotFound.into());
-        };
-        let Some(log_idx) = target_log.log_index else {
+        // Find the target transfer event and its LOCAL index within the transaction
+        let mut log_idx = None;
+        for (idx, log) in receipt.logs().iter().enumerate() {
+            if let Ok(decoded) = log.log_decode::<IERC20::Transfer>() {
+                if decoded.address() == signal.token_contract
+                    && decoded.data().to == signal.recipient
+                    && decoded.data().value == signal.transfer_amount
+                {
+                    log_idx = Some(idx);
+                    break;
+                }
+            }
+        }
+        let Some(log_idx) = log_idx else {
             return Err(ProofError::LogNotFound.into());
         };
 
