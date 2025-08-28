@@ -133,11 +133,8 @@ impl EthClient {
 
         // Encode receipt path
         let mut path_buffer = Vec::new();
-        let adjusted_index = adjust_index_for_rlp(
-            receipt.transaction_index.unwrap() as usize,
-            ordered_receipts.len(),
-        );
-        adjusted_index.encode(&mut path_buffer);
+        let tx_index = receipt.transaction_index.unwrap() as usize;
+        tx_index.encode(&mut path_buffer);
 
         let proof = Escrow::ReceiptProof {
             header: Bytes::from(block_header_encoded),
