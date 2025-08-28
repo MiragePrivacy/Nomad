@@ -105,12 +105,15 @@ impl EthClient {
                 }
             })
             .collect::<Vec<_>>();
-        let mut list =
-            ordered_trie_with_encoder(ordered_receipts.as_ref(), |rlp: &ReceiptEnvelope, buf| {
-                rlp.encode_2718(buf)
-            });
 
-        //check receipts root is correct
+        let target_tx_index = receipt.transaction_index.unwrap() as usize;
+        let mut list = ordered_trie_with_encoder_for_target(
+            ordered_receipts.as_ref(),
+            |rlp: &ReceiptEnvelope, buf| rlp.encode_2718(buf),
+            target_tx_index,
+        );
+
+        // Check receipts root is correct
         let root = list.root();
         if block.header.receipts_root != root {
             return Err(ProofError::InvalidRoot.into());
@@ -125,16 +128,15 @@ impl EthClient {
         });
 
         // Get the target receipt that we're proving inclusion for
-        let tx_index = receipt.transaction_index.unwrap();
-        let target_receipt = &ordered_receipts[tx_index as usize];
+        let target_receipt = &ordered_receipts[target_tx_index];
         // Encode the target receipt for inclusion in proof
         let mut receipt_encoded = Vec::new();
         target_receipt.encode_2718(&mut receipt_encoded);
 
-        // Encode receipt path
+        // Encode receipt path using the ADJUSTED index (to match proof nodes)
         let mut path_buffer = Vec::new();
-        let tx_index = receipt.transaction_index.unwrap() as usize;
-        tx_index.encode(&mut path_buffer);
+        let adjusted_index = adjust_index_for_rlp(target_tx_index, ordered_receipts.len());
+        adjusted_index.encode(&mut path_buffer);
 
         let proof = Escrow::ReceiptProof {
             header: Bytes::from(block_header_encoded),
@@ -145,8 +147,10 @@ impl EthClient {
         };
 
         trace!(
-            "Generated {} byte proof",
-            proof.header.len() + proof.receipt.len() + proof.proof.len() + proof.path.len()
+            "Generated {} byte proof for tx_index {} (adjusted to {})",
+            proof.header.len() + proof.receipt.len() + proof.proof.len() + proof.path.len(),
+            target_tx_index,
+            adjusted_index
         );
 
         Ok(proof)
@@ -155,22 +159,32 @@ impl EthClient {
 
 /// FROM KONA: https://github.com/op-rs/kona/blob/HEAD/crates/proof/mpt/src/util.rs#L7-L51
 /// Compute a trie root of the collection of items with a custom encoder.
-pub fn ordered_trie_with_encoder<T, F>(items: &[T], mut encode: F) -> HashBuilder
+/// Only retains proof for the specified target transaction.
+pub fn ordered_trie_with_encoder_for_target<T, F>(
+    items: &[T],
+    mut encode: F,
+    target_tx_index: usize,
+) -> HashBuilder
 where
     F: FnMut(&T, &mut dyn BufMut),
 {
     let mut index_buffer = Vec::new();
     let mut value_buffer = Vec::new();
-    let items_len = items.len(); // Store preimages for all intermediates
-    let path_nibbles = (0..items_len)
-        .map(|i| {
-            let index = adjust_index_for_rlp(i, items_len);
-            index_buffer.clear();
-            index.encode(&mut index_buffer);
-            Nibbles::unpack(&index_buffer)
-        })
-        .collect::<Vec<_>>();
-    let mut hb = HashBuilder::default().with_proof_retainer(ProofRetainer::new(path_nibbles));
+    let items_len = items.len();
+
+    // Calculate the adjusted index for our target transaction
+    let target_adjusted_index = adjust_index_for_rlp(target_tx_index, items_len);
+
+    // Only retain proof for the target transaction's adjusted index
+    let target_path = {
+        index_buffer.clear();
+        target_adjusted_index.encode(&mut index_buffer);
+        Nibbles::unpack(&index_buffer)
+    };
+
+    let mut hb = HashBuilder::default().with_proof_retainer(ProofRetainer::new(vec![target_path]));
+
+    // Build the trie with all items, but only retain proof for target
     for i in 0..items_len {
         let index = adjust_index_for_rlp(i, items_len);
         index_buffer.clear();
@@ -179,5 +193,6 @@ where
         encode(&items[index], &mut value_buffer);
         hb.add_leaf(Nibbles::unpack(&index_buffer), &value_buffer);
     }
+
     hb
 }
