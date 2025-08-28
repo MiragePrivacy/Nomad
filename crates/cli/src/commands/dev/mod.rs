@@ -4,7 +4,9 @@ use alloy::signers::local::PrivateKeySigner;
 use clap::{Parser, Subcommand};
 use color_eyre::eyre::Result;
 
+use nomad_ethereum::EthClient;
 use nomad_node::config::Config;
+use reqwest::Url;
 
 mod faucet;
 mod proof;
@@ -12,6 +14,9 @@ mod proof;
 /// RPC Client for local and remote nodes
 #[derive(Parser)]
 pub struct DevArgs {
+    /// Optional ethereum rpc url to override with
+    #[arg(short('r'), long, global(true))]
+    pub eth_rpc: Option<Url>,
     #[command(subcommand)]
     pub cmd: DevCommand,
 }
@@ -27,17 +32,21 @@ impl Display for DevArgs {
 
 #[derive(Subcommand)]
 pub enum DevCommand {
-    /// Submit signals to the node to gossip to the network
+    /// Call faucet method on a token contract for each given account
     Faucet(faucet::FaucetArgs),
     /// Generate proof for a transaction
     Proof(proof::ProofArgs),
 }
 
 impl DevArgs {
-    pub async fn execute(self, config: Config, signers: Vec<PrivateKeySigner>) -> Result<()> {
+    pub async fn execute(self, mut config: Config, signers: Vec<PrivateKeySigner>) -> Result<()> {
+        if let Some(rpc) = self.eth_rpc {
+            config.eth.rpc = rpc;
+        }
+        let client = EthClient::new(config.eth, signers).await?;
         match self.cmd {
-            DevCommand::Faucet(args) => args.execute(config, signers).await,
-            DevCommand::Proof(args) => args.execute(config, signers).await,
+            DevCommand::Faucet(args) => args.execute(client).await,
+            DevCommand::Proof(args) => args.execute(client).await,
         }
     }
 }

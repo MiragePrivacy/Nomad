@@ -1,28 +1,17 @@
-use alloy::{primitives::TxHash, providers::Provider, signers::local::PrivateKeySigner};
+use alloy::{primitives::TxHash, providers::Provider};
 use clap::Parser;
 use color_eyre::eyre::Result;
 
 use nomad_ethereum::EthClient;
-use nomad_node::config::Config;
-use reqwest::Url;
 
 #[derive(Parser)]
 pub struct ProofArgs {
     /// Transaction hash to generate proof for
     pub tx_hash: TxHash,
-    /// Optional ethereum rpc url to override with
-    #[arg(short('r'), long)]
-    pub eth_rpc: Option<Url>,
 }
 
 impl ProofArgs {
-    pub async fn execute(self, mut config: Config, signers: Vec<PrivateKeySigner>) -> Result<()> {
-        // Create Ethereum client
-        if let Some(url) = self.eth_rpc {
-            config.eth.rpc = url;
-        }
-        let eth_client = EthClient::new(config.eth, signers).await?;
-
+    pub async fn execute(self, eth_client: EthClient) -> Result<()> {
         // Fetch the transaction receipt
         let receipt = eth_client
             .read_provider
