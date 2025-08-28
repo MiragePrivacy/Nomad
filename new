@@ -1,0 +1,35 @@
+oh didn't realize you hadn't testing again
+
+
+
+2:15
+This did not work
+2:16
+I would recommend plugging the payloads into the solidity tests (edited) 
+:eyes:
+1
+
+2:16
+nomad-1  | 2025-08-28T13:14:38.279755Z  INFO process_signal: Generating transfer proof token=0xbe41a9ec942d5b52be07cc7f4d7e30e10e9b652a
+nomad-1  | 2025-08-28T13:14:38.405588Z TRACE process_signal:generate_proof: Building proof for log index 0 receipt=TransactionReceipt { inner: Eip1559(ReceiptWithBloom { receipt: Receipt { status: Eip658(true), cumulative_gas_used: 12913620, logs: [Log { inner: Log { address: 0xbe41a9ec942d5b52be07cc7f4d7e30e10e9b652a, data: LogData { topics: [0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef, 0x000000000000000000000000e1a9d9c9abb872ddef70a4d108fd8fc3c7ce4dc4, 0x000000000000000000000000658d9c76ff358984d6436ea11ee1eda08894c818], data: 0x00000000000000000000000000000000000000000000000000000000017d7840 } }, block_hash: Some(0x3da739a75f1181516f6d1e73261bc729c1f3a7e0506f952ba0f252cdb1a9b819), block_number: Some(9082325), block_timestamp: Some(1756386876), transaction_hash: Some(0x51fd03b5301e0bcf6146cdd73bf57f84aa73581f026fb1ef65c37850bdb9f79f), transaction_index: Some(92), log_index: Some(190), removed: false }] }, logs_bloom: 0x00000000000000000000000000000880000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000010000000000000200000000000004000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000800000000000000000000000000000000000000000000000000000000001000000000000000000000000000 }), transaction_hash: 0x51fd03b5301e0bcf6146cdd73bf57f84aa73581f026fb1ef65c37850bdb9f79f, transaction_index: Some(92), block_hash: Some(0x3da739a75f1181516f6d1e73261bc729c1f3a7e0506f952ba0f252cdb1a9b819), block_number: Some(9082325), gas_used: 34892, effective_gas_price: 125810338, blob_gas_used: None, blob_gas_price: None, from: 0xe1a9d9c9abb872ddef70a4d108fd8fc3c7ce4dc4, to: Some(0xbe41a9ec942d5b52be07cc7f4d7e30e10e9b652a), contract_address: None } token=0xbe41a9ec942d5b52be07cc7f4d7e30e10e9b652a block_num=9082325 block_hash=0x3da739a75f1181516f6d1e73261bc729c1f3a7e0506f952ba0f252cdb1a9b819 tx=0x51fd03b5301e0bcf6146cdd73bf57f84aa73581f026fb1ef65c37850bdb9f79f
+nomad-1  | 2025-08-28T13:14:38.980184Z TRACE process_signal:generate_proof: Generated 102965 byte proof token=0xbe41a9ec942d5b52be07cc7f4d7e30e10e9b652a block_num=9082325 block_hash=0x3da739a75f1181516f6d1e73261bc729c1f3a7e0506f952ba0f252cdb1a9b819 tx=0x51fd03b5301e0bcf6146cdd73bf57f84aa73581f026fb1ef65c37850bdb9f79f
+nomad-1  | 2025-08-28T13:14:39.229521Z  INFO process_signal: Collecting rewards from escrow token=0xbe41a9ec942d5b52be07cc7f4d7e30e10e9b652a
+nomad-1  | 2025-08-28T13:14:39.917148Z ERROR process_signal: Failed to process signal token=0xbe41a9ec942d5b52be07cc7f4d7e30e10e9b652a
+nomad-1  | 2025-08-28T13:14:40.042251Z ERROR process_signal: error="Contract call failed: server returned an error response: error code 3: execution reverted: Invalid receipt MPT proof, data: \"0x08c379a000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000019496e76616c69642072656365697074204d50542070726f6f6600000000000000\"" 
+:eyes:
+1
+
+
+
+In ordered_trie_with_encoder, the path_nibbles are created using adjust_index_for_rlp:
+rustlet path_nibbles = (0..items_len)
+    .map(|i| {
+        let index = adjust_index_for_rlp(i, items_len);  // <-- HERE
+        index_buffer.clear();
+        index.encode(&mut index_buffer);
+        Nibbles::unpack(&index_buffer)
+    })
+    .collect::<Vec<_>>();
+This means the ProofRetainer is told to retain proofs for adjusted indices, not raw indices.
+The critical issue:
+When you call list.take_proof_nodes(), you're getting proof nodes that were built for the adjusted index ordering. So if transaction 109 was adjusted to position 110, the proof nodes contain the MPT path for proving "item at adjusted position 110", not "item at raw position 109".
