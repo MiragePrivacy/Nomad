@@ -175,7 +175,7 @@ async fn process_signal(
             proof,
             transfer.block_number.unwrap(),
         )
-        .await?;
+        .await;
 
     // Send receipt to client
     acknowledgement(
@@ -186,7 +186,10 @@ async fn process_signal(
             approval_transaction_hash: approve.transaction_hash.to_string(),
             bond_transaction_hash: bond.transaction_hash.to_string(),
             transfer_transaction_hash: transfer.transaction_hash.to_string(),
-            collection_transaction_hash: collect.transaction_hash.to_string(),
+            collection_transaction_hash: collect
+                .map(|v| v.transaction_hash)
+                .unwrap_or_default()
+                .to_string(),
         },
     )
     .await;
