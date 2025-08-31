@@ -130,7 +130,7 @@ impl EthClient {
         // Convert proof nodes to Vec and sort by path specificity (root to leaf order)
         let mut proof_nodes_vec: Vec<_> = proof_nodes
             .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
+            .map(|(k, v)| (*k, v.clone()))
             .collect();
 
         // The verifier consumes nodes sequentially: root → child → … → leaf. We must serialize nodes in path
@@ -143,7 +143,7 @@ impl EthClient {
         // Convert ordered proof nodes to RLP-encoded array format
         let proof_nodes_array: Vec<Bytes> = proof_nodes_vec
             .iter()
-            .map(|(_, node)| Bytes::from(node.clone()))
+            .map(|(_, node)| node.clone())
             .collect();
 
         // RLP encode the array of proof nodes
