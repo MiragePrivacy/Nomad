@@ -52,7 +52,7 @@ impl EthClient {
                 } else {
                     true // If no signal provided, accept any transfer event
                 };
-                
+
                 if matches_signal {
                     log_idx = Some(idx);
                     break;
@@ -124,38 +124,52 @@ impl EthClient {
             return Err(ProofError::InvalidRoot.into());
         }
 
-        // Extract the proof nodes for the target receipt
-        let proof_nodes = list.take_proof_nodes().clone();
-        // Convert proof nodes to Bytes(u8)
-        let proof_nodes_bytes = proof_nodes.iter().fold(Vec::new(), |mut acc, (_, node)| {
-            acc.extend_from_slice(node);
-            acc
-        });
+        // Sort by path specificity (root to leaf order)
+        let mut proof_nodes_vec: Vec<_> = list
+            .take_proof_nodes()
+            .iter()
+            .map(|(k, v)| (*k, v.clone()))
+            .collect();
 
-        // Get the target receipt that we're proving inclusion for
-        let target_receipt = &ordered_receipts[target_tx_index];
-        // Encode the target receipt for inclusion in proof
+        // The verifier consumes nodes sequentially: root → child → … → leaf. We must serialize nodes in path
+        // order so that keccak(node[i]) matches the child reference selected from node[i-1]. Sorting by (path
+        // length, then lexicographic) guarantees parents appear before children and keeps a stable
+        // tiebreak among same-depth keys.
+        proof_nodes_vec
+            .sort_by(|(ka, _), (kb, _)| ka.len().cmp(&kb.len()).then_with(|| ka.cmp(kb)));
+
+        // Convert ordered proof nodes to RLP-encoded array format
+        let proof_nodes_array: Vec<Bytes> =
+            proof_nodes_vec.into_iter().map(|(_, node)| node).collect();
+
+        // RLP encode the array of proof nodes
+        let mut proof_nodes_encoded = Vec::new();
+        proof_nodes_array.encode(&mut proof_nodes_encoded);
+
+        // Get the receipt for the target transaction
+        let trie_receipt = &ordered_receipts[target_tx_index];
+
+        // Encode the receipt for inclusion in proof
         let mut receipt_encoded = Vec::new();
-        target_receipt.encode_2718(&mut receipt_encoded);
+        trie_receipt.encode_2718(&mut receipt_encoded);
 
-        // Encode receipt path using the ADJUSTED index (to match proof nodes)
+        // Use raw transaction index for the pat
         let mut path_buffer = Vec::new();
-        let adjusted_index = adjust_index_for_rlp(target_tx_index, ordered_receipts.len());
-        adjusted_index.encode(&mut path_buffer);
+        target_tx_index.encode(&mut path_buffer);
 
         let proof = Escrow::ReceiptProof {
             header: Bytes::from(block_header_encoded),
             receipt: Bytes::from(receipt_encoded),
-            proof: Bytes::from(proof_nodes_bytes),
+            proof: Bytes::from(proof_nodes_encoded),
             path: Bytes::from(path_buffer),
             log: U256::from(log_idx),
         };
 
         trace!(
-            "Generated {} byte proof for tx_index {} (adjusted to {})",
+            "Generated {} byte proof for tx_index {}, {} proof nodes",
             proof.header.len() + proof.receipt.len() + proof.proof.len() + proof.path.len(),
             target_tx_index,
-            adjusted_index
+            proof_nodes_array.len()
         );
 
         Ok(proof)
@@ -177,19 +191,16 @@ where
     let mut value_buffer = Vec::new();
     let items_len = items.len();
 
-    // Calculate the adjusted index for our target transaction
-    let target_adjusted_index = adjust_index_for_rlp(target_tx_index, items_len);
-
-    // Only retain proof for the target transaction's adjusted index
+    // Use raw transaction index for proof retention path
     let target_path = {
         index_buffer.clear();
-        target_adjusted_index.encode(&mut index_buffer);
+        target_tx_index.encode(&mut index_buffer);
         Nibbles::unpack(&index_buffer)
     };
 
     let mut hb = HashBuilder::default().with_proof_retainer(ProofRetainer::new(vec![target_path]));
 
-    // Build the trie with all items, but only retain proof for target
+    // Build the trie with all items and retain proof for target. using adjusted indices for storage keys
     for i in 0..items_len {
         let index = adjust_index_for_rlp(i, items_len);
         index_buffer.clear();
