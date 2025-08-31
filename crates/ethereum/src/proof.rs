@@ -124,27 +124,23 @@ impl EthClient {
             return Err(ProofError::InvalidRoot.into());
         }
 
-        // Extract proof nodes
-        let proof_nodes = list.take_proof_nodes();
-
-        // Convert proof nodes to Vec and sort by path specificity (root to leaf order)
-        let mut proof_nodes_vec: Vec<_> = proof_nodes
+        // Sort by path specificity (root to leaf order)
+        let mut proof_nodes_vec: Vec<_> = list
+            .take_proof_nodes()
             .iter()
             .map(|(k, v)| (*k, v.clone()))
             .collect();
 
         // The verifier consumes nodes sequentially: root → child → … → leaf. We must serialize nodes in path
-        // order so that keccak(node[i]) matches the child reference selected from node[i-1]. Sorting by (path 
-        // length, then lexicographic) guarantees parents appear before children and keeps a stable 
+        // order so that keccak(node[i]) matches the child reference selected from node[i-1]. Sorting by (path
+        // length, then lexicographic) guarantees parents appear before children and keeps a stable
         // tiebreak among same-depth keys.
         proof_nodes_vec
             .sort_by(|(ka, _), (kb, _)| ka.len().cmp(&kb.len()).then_with(|| ka.cmp(kb)));
 
         // Convert ordered proof nodes to RLP-encoded array format
-        let proof_nodes_array: Vec<Bytes> = proof_nodes_vec
-            .iter()
-            .map(|(_, node)| node.clone())
-            .collect();
+        let proof_nodes_array: Vec<Bytes> =
+            proof_nodes_vec.into_iter().map(|(_, node)| node).collect();
 
         // RLP encode the array of proof nodes
         let mut proof_nodes_encoded = Vec::new();
