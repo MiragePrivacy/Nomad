@@ -25,6 +25,7 @@ features = [
     "yamux",
     "noise",
     "identify",
+    "ping",
     "gossipsub",
     "kad"
 ]

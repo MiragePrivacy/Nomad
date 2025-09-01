@@ -5,7 +5,7 @@ use chrono::Utc;
 use eyre::{eyre, Result};
 use opentelemetry::{global::meter_provider, metrics::Counter};
 use tokio::sync::mpsc::unbounded_channel;
-use tracing::{error, field::Empty, info, info_span, instrument, warn, Span};
+use tracing::{error, info, info_span, instrument, warn, Span};
 
 use nomad_ethereum::{ClientError, EthClient};
 use nomad_p2p::P2pNode;

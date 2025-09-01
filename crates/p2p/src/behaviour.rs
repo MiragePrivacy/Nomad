@@ -8,6 +8,7 @@ use libp2p::{
     gossipsub, identify,
     identity::Keypair,
     kad::{self, store::MemoryStore},
+    ping,
     swarm::{dummy, NetworkBehaviour, ToSwarm},
     Multiaddr, PeerId, StreamProtocol,
 };
@@ -21,8 +22,9 @@ pub struct MirageBehavior {
     pub shutdown: Shutdown,
     pub signal: SignalBehavior,
     pub identify: identify::Behaviour,
-    pub gossipsub: gossipsub::Behaviour,
+    pub ping: ping::Behaviour,
     pub kad: kad::Behaviour<MemoryStore>,
+    pub gossipsub: gossipsub::Behaviour,
 }
 
 impl MirageBehavior {
@@ -31,6 +33,7 @@ impl MirageBehavior {
 
         let shutdown = Shutdown::default();
         let signal = SignalBehavior::default();
+        let ping = ping::Behaviour::default();
 
         let identity_config = identify::Config::new("0.1.0".into(), keypair.public());
         let identify = identify::Behaviour::new(identity_config);
@@ -60,8 +63,9 @@ impl MirageBehavior {
 
         Self {
             shutdown,
-            identify,
             signal,
+            identify,
+            ping,
             kad,
             gossipsub,
         }
