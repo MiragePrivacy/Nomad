@@ -77,13 +77,10 @@ impl NomadNode {
 
     pub async fn next(&self) -> Result<()> {
         let signal = self.signal_pool.sample().await;
-        let signal_display = format!("{signal:?}");
 
         let span = info_span!(
             "process_signal",
-            token = ?signal.token_contract(),
-            otel.status_code = Empty,
-            otel.status_message = Empty
+            token = ?signal.token_contract()
         );
         let _entered = span.enter();
 
@@ -94,8 +91,6 @@ impl NomadNode {
             self.failure.add(1, &[]);
         } else {
             info!("Successfully processed signal");
-            span.record("otel.status_code", "OK");
-            span.record("otel.status_message", signal_display);
             self.success.add(1, &[]);
         }
         Ok(())
@@ -175,7 +170,7 @@ async fn process_signal(
             proof,
             transfer.block_number.unwrap(),
         )
-        .await;
+        .await?;
 
     // Send receipt to client
     acknowledgement(
@@ -186,10 +181,7 @@ async fn process_signal(
             approval_transaction_hash: approve.transaction_hash.to_string(),
             bond_transaction_hash: bond.transaction_hash.to_string(),
             transfer_transaction_hash: transfer.transaction_hash.to_string(),
-            collection_transaction_hash: collect
-                .map(|v| v.transaction_hash)
-                .unwrap_or_default()
-                .to_string(),
+            collection_transaction_hash: collect.transaction_hash.to_string(),
         },
     )
     .await;
