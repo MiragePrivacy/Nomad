@@ -86,9 +86,9 @@ impl Cli {
             .collect()
     }
 
-    /// Get and log global ip address
-    async fn global_ip(&self, config: &Config) -> Result<Option<IpAddr>> {
-        if config.otlp.url.is_some() || matches!(self.cmd, commands::Command::Run(_)) {
+    /// Get global ip address
+    async fn global_ip(&self) -> Result<Option<IpAddr>> {
+        if matches!(self.cmd, commands::Command::Run(_)) {
             if let Ok(res) = reqwest::get("https://ifconfig.me/ip").await {
                 if let Ok(remote_ip) = res.text().await {
                     return Ok(Some(remote_ip.parse()?));
@@ -122,7 +122,7 @@ impl Cli {
             .with_filter(filter);
 
         // fetch ip address if we're running the node or telemetry is enabled
-        let ip = self.global_ip(config).await?;
+        let ip = self.global_ip().await?;
 
         let mut logger = None;
         let mut tracer = None;
@@ -229,13 +229,17 @@ impl Cli {
 }
 
 fn main() -> Result<()> {
-    color_eyre::config::HookBuilder::new()
-        .display_env_section(false)
-        .display_location_section(false)
-        .issue_url(concat!(env!("CARGO_PKG_REPOSITORY"), "/issues/new"))
-        .add_issue_metadata("version", env!("CARGO_PKG_VERSION"))
-        .install()?;
-
     let cli = Cli::parse();
+
+    let mut hook = color_eyre::config::HookBuilder::new()
+        .display_env_section(false)
+        .display_location_section(false);
+    if matches!(cli.cmd, commands::Command::Run(_)) {
+        hook = hook
+            .issue_url(concat!(env!("CARGO_PKG_REPOSITORY"), "/issues/new"))
+            .add_issue_metadata("version", env!("CARGO_PKG_VERSION"));
+    }
+    hook.install()?;
+
     tokio::runtime::Runtime::new()?.block_on(cli.execute())
 }
