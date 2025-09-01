@@ -24,7 +24,7 @@ pub enum VmError {
     InvalidInstruction(u8),
     #[error("Program counter out of bounds: {0}")]
     PcOutOfBounds(usize),
-    #[error("Memory address out of bounds: {0}")]
+    #[error("Memory address out of bounds: {0:08X}")]
     MemoryOutOfBounds(usize),
     #[error("Invalid register: {0} (must be 0-7)")]
     InvalidRegister(u8),
@@ -86,11 +86,14 @@ impl NomadVm {
     }
 
     /// Executes a program, resets, and returns the result from the concatinated registers.
-    fn execute_program(&mut self, program: Program) -> Result<[u8; 32], VmError> {
+    pub fn execute_program(&mut self, program: Program) -> Result<[u8; 32], VmError> {
         // Execute instructions
         let mut cycles = 0;
         while let Some(instruction) = program.get(self.pc) {
-            self.execute_instruction(instruction, program.len())?;
+            if let Err(e) = self.execute_instruction(instruction, program.len()) {
+                println!("{e} - {}", self.pc);
+                return Err(e);
+            }
             cycles += 1;
             if cycles > self.max_cycles || instruction == &Instruction::Halt() {
                 break;
@@ -194,6 +197,26 @@ impl NomadVm {
                 } else {
                     self.pc += 1;
                 }
+            }
+            Instruction::Print(bitmap) => {
+                #[cfg(debug_assertions)]
+                {
+                    print!("DEBUG: ");
+                    let mut first = true;
+                    for reg_idx in 0..8u8 {
+                        if (bitmap & (1 << reg_idx)) != 0 {
+                            if !first {
+                                print!(", ");
+                            }
+                            print!("R{}: 0x{:08X}", reg_idx, self.registers[reg_idx as usize]);
+                            first = false;
+                        }
+                    }
+                    println!();
+                }
+                #[cfg(not(debug_assertions))]
+                let _ = bitmap;
+                self.pc += 1;
             }
             Instruction::Halt() => {}
         }

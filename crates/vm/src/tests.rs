@@ -343,3 +343,35 @@ fn test_complex_program() -> Result<(), VmError> {
     assert_eq!(res[16..20], 0u32.to_be_bytes());
     Ok(())
 }
+
+#[test]
+fn test_print_instruction() -> Result<(), VmError> {
+    let mut vm = NomadVm::new(100);
+    let res = vm.execute_program(program![
+        Set 0, 0xDEADBEEF;
+        Set 1, 0x12345678;
+        Set 2, 0xCAFEBABE;
+        Print 0b00000111;
+        Set 3, 42;
+    ])?;
+
+    assert_eq!(res[0..4], 0xDEADBEEFu32.to_be_bytes());
+    assert_eq!(res[4..8], 0x12345678u32.to_be_bytes());
+    assert_eq!(res[8..12], 0xCAFEBABEu32.to_be_bytes());
+    assert_eq!(res[12..16], 42u32.to_be_bytes());
+    Ok(())
+}
+
+#[test]
+fn test_print_encode_decode() -> Result<(), VmError> {
+    let instruction = Instruction::Print(0b10010101);
+
+    let mut buffer = Vec::new();
+    instruction.encode(&mut buffer).unwrap();
+
+    let (decoded, size) = Instruction::from_bytes(&buffer)?;
+    assert_eq!(instruction, decoded);
+    assert_eq!(size, buffer.len());
+
+    Ok(())
+}

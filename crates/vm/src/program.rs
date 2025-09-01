@@ -1,4 +1,5 @@
 use std::{
+    fmt::Display,
     io::{Result as IoResult, Write},
     ops::Deref,
 };
@@ -68,6 +69,15 @@ impl Program {
     pub fn encode<W: Write>(&self, writer: &mut W) -> IoResult<()> {
         for instruction in &self.0 {
             instruction.encode(writer)?;
+        }
+        Ok(())
+    }
+}
+
+impl Display for Program {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (i, inst) in self.0.iter().enumerate() {
+            f.write_str(&format!("{i:04}: {inst}\n"))?;
         }
         Ok(())
     }

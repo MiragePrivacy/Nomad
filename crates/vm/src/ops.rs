@@ -1,4 +1,5 @@
 use crate::{VmError, REGISTERS};
+use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::io::{Result as IoResult, Write};
 
 #[derive(Debug, Clone, Copy)]
@@ -13,6 +14,7 @@ pub enum Opcode {
     Jmp = 0x06,
     JmpEq = 0x07,
     JmpNe = 0x08,
+    Print = 0xFE,
     Halt = 0xFF,
 }
 
@@ -28,6 +30,7 @@ impl Opcode {
             Opcode::Jmp => 1 + 4,           // opcode + target
             Opcode::JmpEq => 1 + 1 + 1 + 4, // opcode + reg1 + reg2 + target
             Opcode::JmpNe => 1 + 1 + 1 + 4, // opcode + reg1 + reg2 + target
+            Opcode::Print => 1 + 1,         // opcode + bitmap
             Opcode::Halt => 1,              // opcode only
         }
     }
@@ -47,6 +50,7 @@ impl TryFrom<u8> for Opcode {
             0x06 => Ok(Opcode::Jmp),
             0x07 => Ok(Opcode::JmpEq),
             0x08 => Ok(Opcode::JmpNe),
+            0xFE => Ok(Opcode::Print),
             0xFF => Ok(Opcode::Halt),
             _ => Err(VmError::InvalidInstruction(value)),
         }
@@ -57,7 +61,7 @@ impl TryFrom<u8> for Opcode {
 ///
 /// Each instruction operates on 8 registers (0-7) and 1GiB of memory space.
 /// Instructions use big-endian encoding for multi-byte values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Instruction {
     /// Assign a constant value to a register.
     ///
@@ -171,6 +175,20 @@ pub enum Instruction {
     /// ```
     JmpNe(u8, u8, u32),
 
+    /// Debug print register values.
+    ///
+    /// Prints the values of the specified registers to stdout in debug builds.
+    /// In release builds, this instruction is ignored.
+    ///
+    /// # Arguments
+    /// * `u8` - Bitmap of register indices to print (bit 0 = R0, bit 1 = R1, etc.)
+    ///
+    /// # Example
+    /// ```ignore
+    /// Print(0b00000111) // Print registers R0, R1, R2 in debug builds
+    /// ```
+    Print(u8),
+
     /// Halt program execution.
     ///
     /// Stops the VM and returns the current register state.
@@ -181,6 +199,32 @@ pub enum Instruction {
     /// Halt // Stop execution
     /// ```
     Halt(),
+}
+
+impl Display for Instruction {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        match self {
+            Instruction::Set(reg, val) => write!(f, "SET   R{reg}, 0x{val:08X}"),
+            Instruction::Add(dst, src1, src2) => write!(f, "ADD   R{dst}, R{src1}, R{src2}"),
+            Instruction::Sub(dst, src1, src2) => write!(f, "SUB   R{dst}, R{src1}, R{src2}"),
+            Instruction::Xor(dst, src1, src2) => write!(f, "XOR   R{dst}, R{src1}, R{src2}"),
+            Instruction::Load(reg, addr) => write!(f, "LOAD  R{reg}, 0x{addr:08X}"),
+            Instruction::Store(reg, addr) => write!(f, "STORE R{reg}, 0x{addr:08X}"),
+            Instruction::Jmp(addr) => write!(f, "JMP   0x{addr:08X}"),
+            Instruction::JmpEq(r1, r2, addr) => write!(f, "JMPEQ R{r1}, R{r2}, 0x{addr:08X}"),
+            Instruction::JmpNe(r1, r2, addr) => write!(f, "JMPNE R{r1}, R{r2}, 0x{addr:08X}"),
+            Instruction::Print(bitmap) => {
+                let mut reg_list = Vec::new();
+                for reg_idx in 0..8u8 {
+                    if (bitmap & (1 << reg_idx)) != 0 {
+                        reg_list.push(format!("R{reg_idx}"));
+                    }
+                }
+                write!(f, "PRINT {}", reg_list.join(", "))
+            }
+            Instruction::Halt() => write!(f, "HALT  -"),
+        }
+    }
 }
 
 fn validate_reg(reg: u8) -> Result<u8, VmError> {
@@ -203,6 +247,7 @@ impl Instruction {
             Instruction::Jmp { .. } => 5,
             Instruction::JmpEq { .. } => 7,
             Instruction::JmpNe { .. } => 7,
+            Instruction::Print(_) => 2,
             Instruction::Halt() => 1,
         }
     }
@@ -261,10 +306,17 @@ impl Instruction {
                 validate_reg(bytes[2])?,
                 u32::from_be_bytes([bytes[3], bytes[4], bytes[5], bytes[6]]),
             ),
+            Opcode::Print => {
+                let bitmap = bytes[1];
+                if bitmap == 0 {
+                    return Err(VmError::InvalidProgram);
+                }
+                Instruction::Print(bitmap)
+            }
             Opcode::Halt => Instruction::Halt(),
         };
 
-        Ok((instruction, required_size))
+        Ok((instruction, opcode.size()))
     }
 
     /// Encode the instruction and write it to a given buffer
@@ -323,6 +375,10 @@ impl Instruction {
                 buf[1] = *reg1;
                 buf[2] = *reg2;
                 buf[3..7].copy_from_slice(&target.to_be_bytes());
+                writer.write_all(&buf)?;
+            }
+            Instruction::Print(bitmap) => {
+                let buf = [Opcode::Print as u8, *bitmap];
                 writer.write_all(&buf)?;
             }
             Instruction::Halt() => {
