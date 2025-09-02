@@ -1,9 +1,12 @@
 use std::sync::atomic::AtomicBool;
 
+use aes_gcm::{aead::Aead, KeyInit};
 use alloy::signers::local::PrivateKeySigner;
+use arrayref::array_ref;
 use chrono::Utc;
-use eyre::{eyre, Result};
+use eyre::{bail, eyre, Context, Result};
 use opentelemetry::{global::meter_provider, metrics::Counter};
+use sha2::Digest;
 use tokio::sync::mpsc::unbounded_channel;
 use tracing::{error, info, info_span, instrument, warn, Span};
 
@@ -11,8 +14,9 @@ use nomad_ethereum::{ClientError, EthClient};
 use nomad_p2p::P2pNode;
 use nomad_pool::SignalPool;
 use nomad_rpc::spawn_rpc_server;
-use nomad_types::{EncryptedSignal, ReceiptFormat, SignalPayload};
+use nomad_types::{ReceiptFormat, Signal, SignalPayload};
 use nomad_vm::{NomadVm, VmSocket};
+use zeroize::Zeroizing;
 
 pub mod config;
 
@@ -104,31 +108,7 @@ async fn process_signal(
     vm_socket: &VmSocket,
 ) -> Result<()> {
     let start_time = Utc::now().to_rfc3339();
-
-    // Due to https://github.com/alloy-rs/alloy/issues/1318 continuing to poll in the
-    // background, the provider holds onto the span and prevents sending to telemetry.
-    // As a workaround, we only create a wallet provider while it's needed.
-    let provider = eth_client.wallet_provider().await?;
-
-    let signal = match signal {
-        SignalPayload::Encrypted(EncryptedSignal { puzzle, .. }) => {
-            info!("Executing puzzle in vm");
-            // TODO: Include the puzzle bytes in the signal payload.
-            //       For now, we'll just halt which returns a key of [0; 32]
-
-            let _k2 = vm_socket
-                .run((puzzle.to_vec(), Span::current()))
-                .await
-                .map_err(|_| eyre!("failed to execute puzzle"))?;
-
-            // TODO:
-            // - send post request to relay address with sha256(k2)
-            // - Decrypt signal with aes-gcm
-
-            todo!()
-        }
-        SignalPayload::Unencrypted(signal) => signal,
-    };
+    let signal = solve_and_decrypt_signal(vm_socket, signal).await?;
 
     info!("TODO: Validating escrow contract");
     // eth_client.validate_contract(signal, Vec::new());
@@ -149,6 +129,11 @@ async fn process_signal(
             Err(e) => Err(e)?,
         };
     };
+
+    // Due to https://github.com/alloy-rs/alloy/issues/1318 continuing to poll in the
+    // background, the provider holds onto the span and prevents sending to telemetry.
+    // As a workaround, we only create a wallet provider while it's needed.
+    let provider = eth_client.wallet_provider().await?;
 
     info!("Approving and bonding tokens to escrow");
     let [approve, bond] = eth_client.bond(&provider, eoa_1, signal.clone()).await?;
@@ -187,6 +172,69 @@ async fn process_signal(
     .await;
 
     Ok(())
+}
+
+#[instrument(skip_all)]
+async fn solve_and_decrypt_signal(vm_socket: &VmSocket, signal: SignalPayload) -> Result<Signal> {
+    match signal {
+        SignalPayload::Unencrypted(signal) => Ok(signal),
+        SignalPayload::Encrypted(signal) => {
+            if signal.data.len() < 12 {
+                bail!("Data does not contain nonce prefix");
+            }
+
+            info!("Executing puzzle in vm");
+            let k2 = vm_socket
+                .run((signal.puzzle.to_vec(), Span::current()))
+                .await
+                .map_err(|e| eyre!("failed to receive puzzle response: {e}"))?
+                .context("failed to execute puzzle")?;
+
+            info!("Posting digest to relay");
+            // send post request to relay address with sha256(k2)
+            let digest = sha2::Sha256::digest(k2);
+            let k1 = reqwest::Client::new()
+                .post(signal.relay)
+                .body(digest.to_vec())
+                .send()
+                .await
+                .context("failed to request k1 from relay")?
+                .bytes()
+                .await
+                .context("failed to ready k1 from relay")?;
+            if k1.len() != 32 {
+                bail!(
+                    "Invalid relay response, expected 32 bytes, got {}",
+                    k1.len()
+                );
+            }
+
+            info!("Decrypting data");
+            // sort k1 and k2 to determine order
+            let mut sorted_shares = [*array_ref![k1, 0, 32], k2];
+            sorted_shares.sort();
+            // Compute sha256(k1 . k2) for 256 bit encryption key
+            let key = Zeroizing::new(sha2::Sha256::digest(sorted_shares.as_flattened()));
+            // The first 12 bytes in data contain the nonce
+            let nonce = array_ref![signal.data, 0, 12].into();
+            // Decrypt signal with aes-gcm
+            let decrypted = aes_gcm::Aes256Gcm::new(&key)
+                .decrypt(nonce, &signal.data[12..])
+                .map_err(|e| eyre!("Failed to decrypt data: {e}"))?;
+
+            // Decode unencrypted data as json
+            // TODO: consider supporting more encodings
+            let raw_signal: Signal =
+                serde_json::from_slice(&decrypted).context("Failed to decode signal")?;
+            if raw_signal.token_contract != signal.token_contract {
+                warn!(
+                    "decrypted signal doesn't match encrypted signal's token contract: {}",
+                    raw_signal.token_contract
+                );
+            }
+            Ok(raw_signal)
+        }
+    }
 }
 
 #[instrument(skip(receipt))]
