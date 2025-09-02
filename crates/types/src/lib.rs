@@ -1,19 +1,15 @@
 use std::hash::{Hash, Hasher};
 
-use alloy::{
-    primitives::{Address, Bytes, U256},
-    transports::http::reqwest::Url,
-};
+use alloy_primitives::{Address, Bytes, U256};
 use serde::{Deserialize, Serialize};
+use url::Url;
 
-pub use alloy::primitives;
+pub use alloy_primitives as primitives;
 
 mod selectors;
 pub use selectors::*;
 
-/// Top level enum for encrypted and legacy unencrypted signals
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq, Hash)]
-#[serde(untagged)]
 pub enum SignalPayload {
     Encrypted(EncryptedSignal),
     Unencrypted(Signal),

@@ -4,8 +4,9 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-alloy.workspace = true
+alloy-primitives.workspace = true
 eyre.workspace = true
 paste.workspace = true
 serde.workspace = true
 tracing.workspace = true
+url.workspace = true

@@ -4062,11 +4062,12 @@ dependencies = [
 name = "nomad-types"
 version = "0.1.0"
 dependencies = [
- "alloy",
+ "alloy-primitives",
  "eyre",
  "paste",
  "serde",
  "tracing",
+ "url",
 ]
 
 [[package]]

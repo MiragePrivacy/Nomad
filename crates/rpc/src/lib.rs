@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::{debug, info, instrument};
 
-use nomad_types::SignalPayload;
+use nomad_types::{EncryptedSignal, Signal, SignalPayload};
 
 pub use jsonrpsee::http_client::HttpClient;
 
@@ -19,10 +19,27 @@ impl Default for RpcConfig {
     }
 }
 
+/// Signal request allowing either an encrypted or unencrypted signal directly
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum SignalRequest {
+    Encrypted(EncryptedSignal),
+    Unencrypted(Signal),
+}
+
+impl From<SignalRequest> for SignalPayload {
+    fn from(v: SignalRequest) -> Self {
+        match v {
+            SignalRequest::Encrypted(s) => Self::Encrypted(s),
+            SignalRequest::Unencrypted(s) => Self::Unencrypted(s),
+        }
+    }
+}
+
 #[rpc(server, client, namespace = "mirage")]
 pub trait MirageRpc {
     #[method(name = "signal")]
-    async fn signal(&self, message: SignalPayload) -> Result<String, ErrorObjectOwned>;
+    async fn signal(&self, message: SignalRequest) -> Result<String, ErrorObjectOwned>;
 }
 
 struct MirageServer {
@@ -32,9 +49,9 @@ struct MirageServer {
 #[async_trait]
 impl MirageRpcServer for MirageServer {
     #[instrument(skip(self), name = "rpc:signal")]
-    async fn signal(&self, message: SignalPayload) -> Result<String, ErrorObjectOwned> {
+    async fn signal(&self, message: SignalRequest) -> Result<String, ErrorObjectOwned> {
         info!("Received");
-        if self.signal_tx.send(message).is_err() {
+        if self.signal_tx.send(message.into()).is_err() {
             return Err(ErrorObjectOwned::owned(
                 500,
                 "Failed to broadcast signal",
