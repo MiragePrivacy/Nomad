@@ -3,10 +3,10 @@ use std::fmt::Display;
 use alloy::signers::local::PrivateKeySigner;
 use clap::{Parser, Subcommand};
 use color_eyre::eyre::Result;
-use nomad_rpc::HttpClient;
 use reqwest::Url;
 
 use nomad_node::config::Config;
+use nomad_rpc::HttpClient;
 
 mod signal;
 

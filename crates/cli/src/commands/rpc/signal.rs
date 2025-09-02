@@ -4,8 +4,8 @@ use color_eyre::eyre::{Context, Result};
 use reqwest::Url;
 use tracing::info;
 
-use nomad_rpc::{HttpClient, MirageRpcClient};
-use nomad_types::{SignalPayload, Signal};
+use nomad_rpc::{HttpClient, MirageRpcClient, SignalRequest};
+use nomad_types::Signal;
 
 #[derive(Parser)]
 pub struct SignalArgs {
@@ -24,9 +24,9 @@ pub struct SignalArgs {
     ack_url: Option<Url>,
 }
 
-impl From<SignalArgs> for Signal {
+impl From<SignalArgs> for SignalRequest {
     fn from(val: SignalArgs) -> Self {
-        Signal {
+        SignalRequest::Unencrypted(Signal {
             escrow_contract: val.escrow,
             token_contract: val.token,
             recipient: val.recipient,
@@ -34,14 +34,14 @@ impl From<SignalArgs> for Signal {
             reward_amount: val.reward,
             acknowledgement_url: String::new(),
             selector_mapping: None,
-        }
+        })
     }
 }
 
 impl SignalArgs {
     pub async fn execute(self, client: HttpClient) -> Result<()> {
         let res = client
-            .signal(SignalPayload::Unencrypted(self.into()))
+            .signal(self.into())
             .await
             .context("failed to submit signal to rpc")?;
         info!("{res}");

@@ -3,10 +3,10 @@ use std::fmt::Display;
 use alloy::signers::local::PrivateKeySigner;
 use clap::{Parser, Subcommand};
 use color_eyre::eyre::Result;
+use reqwest::Url;
 
 use nomad_ethereum::EthClient;
 use nomad_node::config::Config;
-use reqwest::Url;
 
 mod faucet;
 mod proof;
