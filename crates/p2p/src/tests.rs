@@ -71,7 +71,7 @@ async fn bootstrap_and_propagate_signal() -> eyre::Result<()> {
 
     // Spawn bootstrap node and wait for it to start
     node0.spawn();
-    tokio::time::sleep(Duration::from_secs(5)).await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
     info!("spawned bootstrap node");
 
     // Spawn 2 more nodes with bootstrap configured
@@ -90,7 +90,7 @@ async fn bootstrap_and_propagate_signal() -> eyre::Result<()> {
     }
 
     // Wait for them to all connect
-    tokio::time::sleep(Duration::from_secs(5)).await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
 
     // Test sending a signal to each node
     for i in 0..=2 {
