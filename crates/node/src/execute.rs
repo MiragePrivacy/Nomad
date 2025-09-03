@@ -7,7 +7,7 @@ use sha2::Digest;
 use tracing::{info, instrument, warn, Span};
 use zeroize::Zeroizing;
 
-use nomad_ethereum::{ClientError, EthClient};
+use nomad_ethereum::EthClient;
 use nomad_vm::VmSocket;
 
 /// Process signals sampled from the pool
@@ -23,21 +23,7 @@ pub async fn handle_signal(
     // eth_client.validate_contract(signal, Vec::new());
 
     info!("Selecting active accounts");
-    let [eoa_1, eoa_2] = 'inner: loop {
-        match eth_client.select_accounts(signal.clone()).await {
-            Ok(accounts) => break 'inner accounts,
-            // We don't have at least two accounts with enough balance, wait until they are funded
-            Err(e @ ClientError::NotEnoughEth(_, _, _)) => {
-                warn!("{e}");
-                let ClientError::NotEnoughEth(_, accounts, need) = e else {
-                    unreachable!()
-                };
-                eth_client.wait_for_eth(&accounts, need).await?;
-                continue 'inner;
-            }
-            Err(e) => Err(e)?,
-        };
-    };
+    let [eoa_1, eoa_2] = eth_client.select_accounts(signal.clone()).await?;
 
     // Due to https://github.com/alloy-rs/alloy/issues/1318 continuing to poll in the
     // background, the provider holds onto the span and prevents sending to telemetry.

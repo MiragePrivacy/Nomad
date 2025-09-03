@@ -7,7 +7,7 @@ use opentelemetry::{global::meter_provider, metrics::Counter};
 use tokio::sync::mpsc::unbounded_channel;
 use tracing::{error, info, info_span, warn};
 
-use nomad_ethereum::EthClient;
+use nomad_ethereum::{ClientError, EthClient};
 use nomad_p2p::P2pNode;
 use nomad_pool::SignalPool;
 use nomad_rpc::spawn_rpc_server;
@@ -71,28 +71,32 @@ impl NomadNode {
 
     pub async fn run(self) -> Result<()> {
         loop {
-            self.next().await?;
+            if let Err(e) = self.next().await {
+                if let Ok(ClientError::NotEnoughEth(_, accounts, need)) = e.downcast() {
+                    // wait for eth to be transferred
+                    self.eth_client.wait_for_eth(&accounts, need).await?;
+                }
+            }
         }
     }
 
     pub async fn next(&self) -> Result<()> {
         let signal = self.signal_pool.sample().await;
-
-        let span = info_span!(
+        let _entered = info_span!(
             "process_signal",
             token = ?signal.token_contract()
-        );
-        let _entered = span.enter();
-
-        let res = execute::handle_signal(signal, &self.eth_client, &self.vm_socket).await;
-        if let Err(e) = res {
-            error!("Failed to process signal");
-            error!(error = format!("{e:#}"));
-            self.failure.add(1, &[]);
-        } else {
-            info!("Successfully processed signal");
-            self.success.add(1, &[]);
-        }
-        Ok(())
+        )
+        .entered();
+        execute::handle_signal(signal, &self.eth_client, &self.vm_socket)
+            .await
+            .inspect(|_| {
+                info!("Successfully processed signal");
+                self.success.add(1, &[]);
+            })
+            .inspect_err(|e| {
+                error!("Failed to process signal");
+                error!(error = format!("{e:#}"));
+                self.failure.add(1, &[]);
+            })
     }
 }
