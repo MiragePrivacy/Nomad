@@ -2,7 +2,7 @@ use aes_gcm::{aead::AeadMutInPlace, KeyInit};
 use arrayref::array_ref;
 use chrono::Utc;
 use eyre::{bail, eyre, Context, Result};
-use sha2::Digest;
+use sha3::Digest;
 use tracing::{info, instrument, warn, Span};
 use zeroize::Zeroizing;
 
@@ -20,8 +20,8 @@ pub async fn handle_signal(
     let start_time = Utc::now().to_rfc3339();
     let signal = solve_and_decrypt_signal(vm_socket, signal).await?;
 
-    info!("TODO: Validating escrow contract");
-    // eth_client.validate_contract(signal, Vec::new());
+    info!("Validating escrow contract");
+    eth_client.validate_contract(&signal).await?;
 
     info!("Selecting active accounts");
     let [eoa_1, eoa_2] = eth_client.select_accounts(signal.clone()).await?;
@@ -93,7 +93,7 @@ async fn solve_and_decrypt_signal(vm_socket: &VmSocket, signal: SignalPayload) -
                 .context("failed to execute puzzle")?;
 
             info!("Posting digest to relay");
-            let digest = sha2::Sha256::digest(k2);
+            let digest = sha3::Sha3_256::digest(k2);
             let k1 = reqwest::Client::new()
                 .post(signal.relay)
                 .body(digest.to_vec())
@@ -118,8 +118,8 @@ async fn solve_and_decrypt_signal(vm_socket: &VmSocket, signal: SignalPayload) -
             // sort k1 and k2 to determine hashing order
             let mut sorted_shares = [*array_ref![k1, 0, 32], k2];
             sorted_shares.sort();
-            // Compute sha256(k1 . k2) for 256 bit encryption key
-            let key = Zeroizing::new(sha2::Sha256::digest(sorted_shares.as_flattened()));
+            // Compute sha356(k1 . k2) for 256 bit encryption key
+            let key = Zeroizing::new(sha3::Sha3_256::digest(sorted_shares.as_flattened()));
             // Decrypt signal with aes-gcm
             aes_gcm::Aes256Gcm::new(&key)
                 .decrypt_in_place(array_ref![nonce_bytes, 0, 12].into(), &[], &mut data)

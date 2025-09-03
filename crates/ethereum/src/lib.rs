@@ -205,11 +205,7 @@ impl EthClient {
     /// - bytecode on-chain should match expected obfuscation output
     /// - escrow contract is not bonded yet
     #[instrument(skip_all)]
-    pub async fn validate_contract(
-        &self,
-        signal: Signal,
-        expected_bytecode: Vec<u8>,
-    ) -> Result<(), ClientError> {
+    pub async fn validate_contract(&self, signal: &Signal) -> Result<(), ClientError> {
         if let Some(ref selector_mapping) = signal.selector_mapping {
             // This is an obfuscated contract
             info!(
@@ -244,15 +240,6 @@ impl EthClient {
 
             info!("Obfuscated contract validation successful");
             return Ok(());
-        }
-
-        // Standard validation for non-obfuscated contracts
-        let bytecode = self
-            .read_provider
-            .get_code_at(signal.escrow_contract)
-            .await?;
-        if bytecode != expected_bytecode {
-            return Err(ClientError::InvalidBytecode);
         }
 
         // Ensure escrow contract is not bonded yet

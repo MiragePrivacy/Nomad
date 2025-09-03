@@ -3865,7 +3865,7 @@ dependencies = [
  "resolve-path",
  "serde",
  "serde_json",
- "sha2",
+ "sha3",
  "tokio",
  "toml 0.9.5",
  "tracing",
