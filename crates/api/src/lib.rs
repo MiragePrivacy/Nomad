@@ -68,12 +68,14 @@ async fn signal(
 }
 
 fn health_docs(op: TransformOperation) -> TransformOperation {
-    op.description("Get node health information")
+    op.tag("Nomad API")
+        .description("Get node health information")
         .response::<200, Json<HealthResponse>>()
 }
 
 fn signal_docs(op: TransformOperation) -> TransformOperation {
-    op.description("Submit a new signal to the node")
+    op.tag("Nomad API")
+        .description("Submit a new signal to the node")
         .response_with::<200, String, _>(|t| t.example("Signal acknowledged"))
         .response_with::<500, String, _>(|t| t.example("Failed to broadcast signal"))
 }
@@ -95,7 +97,12 @@ pub async fn spawn_api_server(
     let app = ApiRouter::new()
         .api_route("/health", get_with(health, health_docs))
         .api_route("/signal", post_with(signal, signal_docs))
-        .route("/scalar", Scalar::new("/openapi.json").axum_route())
+        .route(
+            "/scalar",
+            Scalar::new("/openapi.json")
+                .with_title("Nomad Playground")
+                .axum_route(),
+        )
         .finish_api_with(&mut api, |api| api)
         .route("/openapi.json", axum::routing::get(serve_docs))
         .layer(Extension(Arc::new(api)))
