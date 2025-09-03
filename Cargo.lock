@@ -3986,6 +3986,7 @@ version = "0.1.0"
 dependencies = [
  "alloy",
  "alloy-trie",
+ "humantime-serde",
  "nomad-types",
  "serde",
  "serde_json",

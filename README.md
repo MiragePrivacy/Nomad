@@ -101,10 +101,66 @@ nomad --pk <key1> --pk <key2> faucet <CONTRACT>
 
 ### Configuration
 
-Use the `--config` flag to specify a custom configuration file:
+Use the `-c/--config` flag to specify a custom configuration file:
 
 ```bash
 nomad --config /path/to/config.toml run
+```
+
+#### Automated Token Swapping
+
+Nomad supports automated token-to-ETH swapping via Uniswap V2 to maintain minimum ETH balances. This feature is **optional** and disabled by default.
+
+**Configuration:**
+
+```toml
+[eth]
+rpc = "https://eth-sepolia.public.blastapi.io"
+min_eth = 0.01  # Minimum ETH balance required for accounts
+
+# Uniswap V2 configuration for automated token swapping
+[eth.uniswap]
+enabled = true                    # Enable/disable token swapping
+router = "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D"  # Uniswap V2 router
+max_slippage_percent = 5          # Maximum slippage (5%)
+swap_deadline = "20m"             # Transaction deadline
+target_eth_amount = 0.005         # Target ETH amount per swap
+check_interval = "5m"             # How often to check balances
+
+# Token swap configuration - tokens available for swapping
+# USDC is included by default but disabled for safety
+[eth.token_swaps.USDC]
+address = "0xA0b86a33E6d9A77F45Ac7Be05d83c1B40c8063c5"  # Mainnet USDC
+min_balance = "1000000000"        # Keep 1000 USDC (6 decimals)
+enabled = true                    # Set to true to enable swapping
+
+[eth.token_swaps.DAI]
+address = "0x6b175474e89094c44da98b954eedeac495271d0f"  # Token contract
+min_balance = "1000000000000000000000"  # Keep 1000 DAI (18 decimals)
+enabled = true
+```
+
+**How it works:**
+
+1. **Background Monitoring**: Periodically checks account ETH balances (configurable interval)
+2. **Swap Conditions**: If an account's ETH < `min_eth`, look for swappable tokens
+3. **Token Selection**: Check configured tokens with `enabled = true`
+4. **Minimum Retention**: Only swap tokens above `min_balance` threshold
+5. **Target Amount**: Only swap if we can get at least `target_eth_amount` ETH
+6. **Slippage Protection**: Swaps include configurable slippage limits
+
+**Network Configuration:**
+
+For different networks, only the router address needs to be updated (WETH and factory addresses are automatically retrieved from the router on startup):
+
+```toml
+# Mainnet
+[eth.uniswap]
+router = "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D"
+
+# Sepolia Testnet
+[eth.uniswap]
+router = "0xeE567Fe1712Faf6149d80dA1E6934E354124CfE3"
 ```
 
 ### Logging

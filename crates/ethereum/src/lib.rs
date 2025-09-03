@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     fmt::{Debug, Display},
     time::Duration,
 };
@@ -20,7 +21,7 @@ use alloy::{
 };
 use nomad_types::{ObfuscatedCaller, Signal};
 use serde::{Deserialize, Serialize};
-use tracing::{debug, field::Empty, info, instrument, warn, Span};
+use tracing::{debug, field::Empty, info, instrument, trace, warn, Span};
 use url::Url;
 
 mod proof;
@@ -34,6 +35,21 @@ sol! {
         function mint() external;
         function transfer(address to, uint256 value) external returns (bool);
         function approve(address spender, uint256 value) external returns (bool);
+    }
+
+    #[sol(rpc)]
+    contract IUniswapV2Router02 {
+        function swapExactTokensForETH(
+            uint amountIn,
+            uint amountOutMin,
+            address[] calldata path,
+            address to,
+            uint deadline
+        ) external returns (uint[] memory amounts);
+        function getAmountsOut(uint amountIn, address[] calldata path)
+            external view returns (uint[] memory amounts);
+        function WETH() external pure returns (address);
+        function factory() external pure returns (address);
     }
 
     #[sol(rpc)]
@@ -71,6 +87,37 @@ pub struct EthConfig {
     pub rpc: Url,
     /// Minimum eth required for an account to be usable
     pub min_eth: f64,
+    /// Uniswap V2 configuration
+    pub uniswap: UniswapV2Config,
+    /// Token swap configuration - table keyed by name
+    pub token_swaps: HashMap<String, TokenSwapConfig>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(default)]
+pub struct UniswapV2Config {
+    pub enabled: bool,
+    pub router: Address,
+    pub max_slippage_percent: u8,
+    #[serde(with = "humantime_serde")]
+    pub swap_deadline: Duration,
+    pub target_eth_amount: f64,
+    #[serde(with = "humantime_serde")]
+    pub check_interval: Duration,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct TokenSwapConfig {
+    pub address: Address,
+    pub min_balance: U256,
+    pub enabled: bool,
+}
+
+#[derive(Clone)]
+pub struct UniswapRuntime {
+    pub config: UniswapV2Config,
+    pub weth_address: Address,
+    pub target_eth_wei: U256,
 }
 
 impl Debug for EthConfig {
@@ -84,9 +131,39 @@ impl Debug for EthConfig {
 
 impl Default for EthConfig {
     fn default() -> Self {
+        // Add default USDC configuration (mainnet)
+        let mut token_swaps = HashMap::new();
+        token_swaps.insert(
+            "USDC".to_string(),
+            TokenSwapConfig {
+                address: "0xA0b86a33E6d9A77F45Ac7Be05d83c1B40c8063c5"
+                    .parse()
+                    .unwrap(), // Mainnet USDC
+                min_balance: U256::from(1_000_000_000u64), // 1000 USDC (6 decimals)
+                enabled: false,                            // Disabled by default for safety
+            },
+        );
+
         Self {
             rpc: "https://ethereum-rpc.publicnode.com".parse().unwrap(),
             min_eth: 0.01,
+            uniswap: UniswapV2Config::default(),
+            token_swaps,
+        }
+    }
+}
+
+impl Default for UniswapV2Config {
+    fn default() -> Self {
+        Self {
+            enabled: false, // Disabled by default for safety
+            router: "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D"
+                .parse()
+                .unwrap(), // Mainnet router
+            max_slippage_percent: 5,
+            swap_deadline: Duration::from_secs(20 * 60), // 20 minutes
+            target_eth_amount: 0.005, // Default to swapping for 0.005 ETH at a time
+            check_interval: Duration::from_secs(5 * 60), // Check every 5 minutes
         }
     }
 }
@@ -99,12 +176,15 @@ type ReadProvider = FillProvider<
     RootProvider,
 >;
 
+#[derive(Clone)]
 pub struct EthClient {
     pub read_provider: ReadProvider,
     rpc: String,
     wallet: EthereumWallet,
     accounts: Vec<Address>,
     min_eth: (U256, f64),
+    config: EthConfig,
+    uniswap: Option<UniswapRuntime>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -131,6 +211,10 @@ pub enum ClientError {
     NotEnoughEth(f64, Vec<usize>, usize),
     #[error("No accounts have enough token balance to execute the signal")]
     NotEnoughTokens,
+    #[error("Token swap failed: {_0}")]
+    SwapFailed(String),
+    #[error("Insufficient token balance for swap: need {_0}, have {_1}")]
+    InsufficientTokenBalance(U256, U256),
 }
 
 impl EthClient {
@@ -158,12 +242,31 @@ impl EthClient {
         let rpc = config.rpc.to_string();
         let read_provider = ProviderBuilder::new().connect(&rpc).await?;
 
+        // Initialize Uniswap runtime data if enabled
+        let uniswap = if config.uniswap.enabled {
+            let target_wei = parse_ether(&config.uniswap.target_eth_amount.to_string()).unwrap();
+
+            // Get WETH address from router contract
+            let router = IUniswapV2Router02::new(config.uniswap.router, &read_provider);
+            let weth = router.WETH().call().await?;
+
+            Some(UniswapRuntime {
+                config: config.uniswap.clone(),
+                weth_address: weth,
+                target_eth_wei: target_wei,
+            })
+        } else {
+            None
+        };
+
         Ok(Self {
             read_provider,
             rpc,
             wallet,
             accounts,
             min_eth,
+            config,
+            uniswap,
         })
     }
 
@@ -529,5 +632,260 @@ impl EthClient {
         info!("Successfully collected from escrow");
 
         Ok(receipt)
+    }
+
+    /// Check which accounts need ETH and have swappable tokens
+    #[instrument(skip_all)]
+    pub async fn check_swap_conditions(
+        &self,
+    ) -> Result<Vec<(usize, String, U256, U256)>, ClientError> {
+        // Early return if Uniswap is not configured
+        let Some(uniswap) = self.uniswap.as_ref() else {
+            trace!("Uniswap disabled, skipping swap condition checks");
+            return Ok(Vec::new());
+        };
+        let mut swap_candidates = Vec::new();
+
+        for (account_idx, &account) in self.accounts.iter().enumerate() {
+            let eth_balance = self.read_provider.get_balance(account).await?;
+
+            // Check if this account needs ETH
+            if eth_balance < self.min_eth.0 {
+                let eth_deficit = self.min_eth.0 - eth_balance;
+
+                // Calculate how many multiples of target_eth_amount we need
+                let multiples_needed =
+                    (eth_deficit + uniswap.target_eth_wei - U256::from(1)) / uniswap.target_eth_wei; // Ceiling division
+                let target_eth_to_get = multiples_needed * uniswap.target_eth_wei;
+
+                info!(
+                    "Account {} needs ETH: has {}, needs {}, target to swap for: {}",
+                    account,
+                    format_ether(eth_balance),
+                    format_ether(self.min_eth.0),
+                    format_ether(target_eth_to_get)
+                );
+
+                // Check if any tokens can be swapped to get the target ETH amount
+                for (token_name, token_config) in &self.config.token_swaps {
+                    if !token_config.enabled {
+                        continue;
+                    }
+
+                    let token = IERC20::new(token_config.address, &self.read_provider);
+                    let token_balance = token.balanceOf(account).call().await?;
+
+                    // If we have more than min_balance, check if we can swap enough for target ETH
+                    if token_balance > token_config.min_balance {
+                        let available_tokens = token_balance - token_config.min_balance;
+
+                        // Get rough estimate of tokens needed for target ETH amount
+                        // (We'll do exact calculation in swap_tokens_for_eth)
+                        let router =
+                            IUniswapV2Router02::new(uniswap.config.router, &self.read_provider);
+                        let path = vec![token_config.address, uniswap.weth_address];
+
+                        // Try to get quote for available tokens to see if we can get enough ETH
+                        if let Ok(amounts_out) =
+                            router.getAmountsOut(available_tokens, path).call().await
+                        {
+                            let estimated_eth_output = amounts_out[1];
+
+                            // Only add to candidates if we can get at least the target ETH amount
+                            if estimated_eth_output >= target_eth_to_get {
+                                info!(
+                                    "Account {} can swap {} {} tokens for ~{} ETH (target: {})",
+                                    account,
+                                    available_tokens,
+                                    token_name,
+                                    format_ether(estimated_eth_output),
+                                    format_ether(target_eth_to_get)
+                                );
+                                swap_candidates.push((
+                                    account_idx,
+                                    token_name.clone(),
+                                    available_tokens,
+                                    target_eth_to_get,
+                                ));
+                            } else {
+                                debug!(
+                                    "Account {} has {} {} tokens but can only get {} ETH, need {} ETH",
+                                    account,
+                                    available_tokens,
+                                    token_name,
+                                    format_ether(estimated_eth_output),
+                                    format_ether(target_eth_to_get)
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(swap_candidates)
+    }
+
+    /// Execute token-to-ETH swap via Uniswap V2
+    #[instrument(skip_all, fields(account = ?self.accounts[account_idx], token = token_name, target_eth = %target_eth_amount))]
+    pub async fn swap_tokens_for_eth(
+        &self,
+        provider: impl Provider,
+        account_idx: usize,
+        token_name: &str,
+        max_tokens_available: U256,
+        target_eth_amount: U256,
+    ) -> Result<TransactionReceipt, ClientError> {
+        let Some(uniswap) = self.uniswap.as_ref() else {
+            return Err(ClientError::SwapFailed(
+                "Uniswap not configured".to_string(),
+            ));
+        };
+
+        let token_config = self
+            .config
+            .token_swaps
+            .get(token_name)
+            .ok_or_else(|| ClientError::SwapFailed("Token not found in config".to_string()))?;
+
+        let account = self.accounts[account_idx];
+
+        // Get expected output amount from Uniswap
+        let router = IUniswapV2Router02::new(uniswap.config.router, &provider);
+
+        // Path: Token -> WETH -> ETH
+        let path = vec![token_config.address, uniswap.weth_address];
+
+        // Calculate exact tokens needed for target ETH amount
+        // We'll use the maximum available tokens but verify we get at least target ETH
+        let amounts_out = router
+            .getAmountsOut(max_tokens_available, path.clone())
+            .call()
+            .await?;
+        let expected_eth = amounts_out[1];
+
+        // Verify we can get at least the target ETH amount
+        if expected_eth < target_eth_amount {
+            return Err(ClientError::SwapFailed(format!(
+                "Cannot get enough ETH: need {}, can only get {} with {} tokens",
+                format_ether(target_eth_amount),
+                format_ether(expected_eth),
+                max_tokens_available
+            )));
+        }
+
+        let amount_to_swap = max_tokens_available;
+
+        // Verify we have enough tokens
+        let token = IERC20::new(token_config.address, &self.read_provider);
+        let balance = token.balanceOf(account).call().await?;
+
+        if balance < amount_to_swap {
+            return Err(ClientError::InsufficientTokenBalance(
+                amount_to_swap,
+                balance,
+            ));
+        }
+
+        // Apply slippage protection
+        let min_eth_out =
+            expected_eth * U256::from(100 - uniswap.config.max_slippage_percent) / U256::from(100);
+
+        // Set deadline
+        let deadline = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + uniswap.config.swap_deadline.as_secs();
+
+        info!(
+            "Swapping {} {} for at least {} ETH",
+            amount_to_swap,
+            token_name,
+            format_ether(min_eth_out)
+        );
+
+        // First approve the router to spend tokens
+        let approve_tx = token
+            .approve(uniswap.config.router, amount_to_swap)
+            .from(account)
+            .send()
+            .await?
+            .get_receipt()
+            .await?;
+
+        info!(
+            "Approved router to spend tokens: {}",
+            approve_tx.transaction_hash
+        );
+
+        // Execute swap
+        let swap_tx = router
+            .swapExactTokensForETH(
+                amount_to_swap,
+                min_eth_out,
+                path,
+                account,
+                U256::from(deadline),
+            )
+            .from(account)
+            .send()
+            .await?
+            .get_receipt()
+            .await?;
+
+        info!("Swap completed: {}", swap_tx.transaction_hash);
+
+        Ok(swap_tx)
+    }
+
+    /// Monitor and maintain minimum ETH balances by swapping tokens
+    #[instrument(skip_all)]
+    pub async fn maintain_eth_balances(&self) -> Result<(), ClientError> {
+        let provider = self.wallet_provider().await?;
+        let swap_candidates = self.check_swap_conditions().await?;
+
+        if swap_candidates.is_empty() {
+            debug!("No swap opportunities found");
+            return Ok(());
+        }
+
+        info!("Found {} swap opportunities", swap_candidates.len());
+
+        // Execute swaps for accounts that need ETH
+        for (account_idx, token_name, max_tokens, target_eth) in swap_candidates {
+            match self
+                .swap_tokens_for_eth(&provider, account_idx, &token_name, max_tokens, target_eth)
+                .await
+            {
+                Ok(receipt) => {
+                    info!(
+                        "Successfully swapped {} {} to ETH for account {} (target: {} ETH): {}",
+                        max_tokens,
+                        token_name,
+                        self.accounts[account_idx],
+                        format_ether(target_eth),
+                        receipt.transaction_hash
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to swap {} {} for account {} (target: {} ETH): {}",
+                        token_name,
+                        max_tokens,
+                        self.accounts[account_idx],
+                        format_ether(target_eth),
+                        e
+                    );
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Get the swap check interval, returns None if Uniswap is disabled
+    pub fn swap_check_interval(&self) -> Option<Duration> {
+        self.uniswap.as_ref().map(|u| u.config.check_interval)
     }
 }
