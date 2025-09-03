@@ -1,7 +1,8 @@
-use alloy::signers::local::PrivateKeySigner;
+use alloy::{primitives::Address, signers::local::PrivateKeySigner};
 use clap::Parser;
 use color_eyre::eyre::Result;
 use reqwest::Url;
+use tracing::info;
 
 use nomad_node::{config::Config, NomadNode};
 
@@ -19,6 +20,9 @@ pub struct RunArgs {
     /// ETH RPC URL for sending transactions
     #[arg(long, env("ETH_RPC"))]
     pub eth_rpc: Option<Url>,
+    /// Override Uniswap V2 router address
+    #[arg(long)]
+    pub uniswap_router: Option<Address>,
 }
 
 impl RunArgs {
@@ -35,6 +39,10 @@ impl RunArgs {
         }
         if let Some(peer) = self.peer.clone() {
             config.p2p.bootstrap = vec![peer.parse().unwrap()];
+        }
+        if let Some(router_address) = self.uniswap_router {
+            config.eth.uniswap.router = router_address;
+            info!("Using Uniswap router override: {}", router_address);
         }
 
         NomadNode::init(config, signers).await?.run().await

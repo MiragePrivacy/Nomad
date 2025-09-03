@@ -483,6 +483,11 @@ fi
 # Add run subcommand with CLI overrides
 NODE1_CMD="$NODE1_CMD run --eth-rpc $HTTP_RPC --api-port $RPC_PORT_1 --p2p-port $P2P_PORT_1"
 
+# Add Uniswap router override if available
+if [ -n "${UNISWAP_ROUTER:-}" ]; then
+  NODE1_CMD="$NODE1_CMD --uniswap-router $UNISWAP_ROUTER"
+fi
+
 setsid stdbuf -oL env $NODE1_CMD \
   > >(tee "$LOG1" | sed -u "s/^/\x1b[${colors[0]}mNode 1:\x1b[0m /") 2>&1 &
 PIDS[1]=$!
@@ -534,6 +539,11 @@ for ((i=2; i<=NODE_COUNT; i++)); do
 
   # Add run subcommand with CLI overrides
   NODE_CMD="$NODE_CMD run --eth-rpc $HTTP_RPC --api-port $RPC_PORT --p2p-port $P2P_PORT --peer $PEER_ADDR"
+
+  # Add Uniswap router override if available
+  if [ -n "${UNISWAP_ROUTER:-}" ]; then
+    NODE_CMD="$NODE_CMD --uniswap-router $UNISWAP_ROUTER"
+  fi
 
   # Create log file for this node to capture its address
   LOG_FILE=$(mktemp)

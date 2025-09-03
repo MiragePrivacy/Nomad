@@ -24,6 +24,7 @@
           # Development
           foundry
           jq
+          bc
         ];
       };
     };
