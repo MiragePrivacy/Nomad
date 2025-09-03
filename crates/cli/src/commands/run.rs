@@ -7,9 +7,9 @@ use nomad_node::{config::Config, NomadNode};
 
 #[derive(Parser)]
 pub struct RunArgs {
-    /// Port for the RPC server
+    /// Port for the api server
     #[arg(short, long)]
-    pub rpc_port: Option<u16>,
+    pub api_port: Option<u16>,
     /// Port for the p2p node
     #[arg(short, long)]
     pub p2p_port: Option<u16>,
@@ -27,8 +27,8 @@ impl RunArgs {
         if let Some(rpc) = self.eth_rpc.clone() {
             config.eth.rpc = rpc;
         }
-        if let Some(port) = self.rpc_port {
-            config.rpc.port = port;
+        if let Some(port) = self.api_port {
+            config.api.port = port;
         }
         if let Some(port) = self.p2p_port {
             config.p2p.tcp = port;

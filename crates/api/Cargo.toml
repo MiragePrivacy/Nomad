@@ -1,5 +1,5 @@
 [package]
-name = "nomad-rpc"
+name = "nomad-api"
 version.workspace = true
 edition.workspace = true
 
@@ -7,8 +7,16 @@ edition.workspace = true
 nomad-types = { path = "../types" }
 
 eyre.workspace = true
+schemars.workspace = true
 serde.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 
-jsonrpsee = { version = "0.26.0", features = ["full"]}
+aide = { version = "0.15", features = [
+    "scalar",
+    "axum",
+    "axum-json",
+    "macros",
+] }
+axum = { version = "0.8.1", features = ["macros"] }
+

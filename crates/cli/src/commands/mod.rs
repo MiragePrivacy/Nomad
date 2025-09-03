@@ -49,9 +49,6 @@ macro_rules! impl_command {
 impl_command! {
     /// Run the node. If no keys are included, runs in read-only mode.
     mod run;
-    /// Call RPC methods on a local or remote node.
-    #[display = to_string]
-    mod rpc;
     /// Withdraw tokens from a signer address to a destination address
     mod withdraw;
     /// Development commands

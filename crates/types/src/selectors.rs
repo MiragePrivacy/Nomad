@@ -1,3 +1,4 @@
+use crate::HexSelector;
 use alloy_primitives::{Bytes, Selector, U256};
 
 /// Generate escrow contract selectors and mapping struct
@@ -8,9 +9,9 @@ macro_rules! impl_contract_selectors {
             $( pub const [< $title:upper _ $id:upper >]: alloy_primitives::Selector = alloy_primitives::fixed_bytes!($lit); )*
 
             /// Selector mapping struct with compile-time validation and fast lookups
-            #[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq)]
+            #[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema, Clone, Debug, PartialEq, Eq)]
             pub struct [< $title Mappings >] {
-                $( #[serde(rename = $lit)] pub [< $id:lower >]: alloy_primitives::Selector ),*
+                $( #[serde(rename = $lit)] #[schemars(with = "HexSelector")] pub [< $id:lower >]: alloy_primitives::Selector ),*
             }
 
             impl [< $title Mappings >] {
