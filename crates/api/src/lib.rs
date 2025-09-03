@@ -18,7 +18,7 @@ use nomad_types::SignalPayload;
 
 pub mod types;
 
-use crate::types::{HealthResponse, SignalRequest};
+use crate::types::{HealthResponse, RelayGetResponse, SignalRequest};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
@@ -58,17 +58,35 @@ async fn signal(
 ) -> (StatusCode, String) {
     // Validate signal
     if let SignalRequest::Encrypted(signal) = &req {
-        // Ensure relay is up
+        // Ensure relay status is expected
         let res = reqwest::Client::new()
             .get(signal.relay.clone())
             .send()
             .await
             .and_then(|r| r.error_for_status());
-        if let Err(e) = res {
-            return (
-                StatusCode::BAD_REQUEST,
-                format!("Relay is not accessible: {e}"),
-            );
+        match res {
+            Ok(r) => match r.json::<RelayGetResponse>().await {
+                Ok(r) => {
+                    if &r.status != "ok" || &r.service != "relay" {
+                        return (
+                            StatusCode::BAD_REQUEST,
+                            format!("Unexpected relay status, got: {r:?}"),
+                        );
+                    }
+                }
+                Err(e) => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        format!("Failed to read relay status: {e}"),
+                    )
+                }
+            },
+            Err(e) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    format!("Invalid relay status response: {e}"),
+                )
+            }
         };
 
         // simple check to make sure we have 12 byte nonce + some encrypted data in the signal

@@ -37,3 +37,10 @@ pub struct HealthResponse {
     /// Currently only broadcasting and not processing signals
     pub read_only: bool,
 }
+
+/// Relay get response
+#[derive(Serialize, Deserialize, Debug)]
+pub struct RelayGetResponse {
+    pub status: String,
+    pub service: String,
+}

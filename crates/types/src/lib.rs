@@ -40,10 +40,10 @@ pub struct EncryptedSignal {
     #[schemars(example = "http://your-server.com/relay")]
     pub relay: Url,
     /// Hex-encoded puzzle bytes
-    #[schemars(with = "HexBytes", example = 0x0)]
+    #[schemars(with = "HexBytes", example = Bytes::from(vec![0; 500]))]
     pub puzzle: Bytes,
     /// Hex-encoded AES-GCM encrypted data containing a json [`Signal`]
-    #[schemars(with = "HexBytes", example = 0x0)]
+    #[schemars(with = "HexBytes", example = Bytes::from(vec![0; 24]))]
     pub data: Bytes,
 }
 
