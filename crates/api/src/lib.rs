@@ -2,7 +2,7 @@ use std::{sync::Arc, time::SystemTime};
 
 use aide::{
     axum::{
-        routing::{get, get_with, post_with},
+        routing::{get_with, post_with},
         ApiRouter, IntoApiResponse,
     },
     openapi::OpenApi,
@@ -18,7 +18,7 @@ use nomad_types::SignalPayload;
 
 pub mod types;
 
-use crate::types::{HealthResponse, SignalRequest, SignalResponse};
+use crate::types::{HealthResponse, SignalRequest};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
