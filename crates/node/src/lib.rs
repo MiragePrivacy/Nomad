@@ -1,18 +1,17 @@
 use std::sync::atomic::AtomicBool;
 
 use alloy::signers::local::PrivateKeySigner;
-
 use eyre::Result;
 use opentelemetry::{global::meter_provider, metrics::Counter};
 use tokio::sync::mpsc::unbounded_channel;
-use tracing::{error, info, info_span, warn};
+use tracing::{error, info, warn};
 
 use nomad_ethereum::{ClientError, EthClient};
 use nomad_p2p::P2pNode;
 use nomad_pool::SignalPool;
 use nomad_rpc::spawn_rpc_server;
-
 use nomad_vm::{NomadVm, VmSocket};
+
 pub mod config;
 mod execute;
 
@@ -25,6 +24,7 @@ pub struct NomadNode {
 }
 
 impl NomadNode {
+    /// Initialize the node with p2p, an eth client, and a vm worker thread
     pub async fn init(config: config::Config, signers: Vec<PrivateKeySigner>) -> Result<Self> {
         // Spawn rpc server
         let (signal_tx, signal_rx) = unbounded_channel();
@@ -53,11 +53,11 @@ impl NomadNode {
         up.record(1, &[]);
         let success = meter
             .u64_counter("signal_success")
-            .with_description("Number of successfully processed signals")
+            .with_description("Number of successfully executed signals")
             .build();
         let failure = meter
             .u64_counter("signal_failure")
-            .with_description("Number of failures when processing signals")
+            .with_description("Number of failures when executing signals")
             .build();
 
         Ok(Self {
@@ -69,6 +69,7 @@ impl NomadNode {
         })
     }
 
+    /// Run the node
     pub async fn run(self) -> Result<()> {
         loop {
             if let Err(e) = self.next().await {
@@ -80,22 +81,17 @@ impl NomadNode {
         }
     }
 
+    /// Handle the next signal from the pool (blocking until one is available)
     pub async fn next(&self) -> Result<()> {
         let signal = self.signal_pool.sample().await;
-        let _entered = info_span!(
-            "process_signal",
-            token = ?signal.token_contract()
-        )
-        .entered();
         execute::handle_signal(signal, &self.eth_client, &self.vm_socket)
             .await
             .inspect(|_| {
-                info!("Successfully processed signal");
+                info!("Successfully executed signal");
                 self.success.add(1, &[]);
             })
             .inspect_err(|e| {
-                error!("Failed to process signal");
-                error!(error = format!("{e:#}"));
+                error!("Failed to execute signal: {e:#}");
                 self.failure.add(1, &[]);
             })
     }

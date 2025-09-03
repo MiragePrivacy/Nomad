@@ -1,16 +1,17 @@
-use aes_gcm::{aead::Aead, KeyInit};
+use aes_gcm::{aead::AeadMutInPlace, KeyInit};
 use arrayref::array_ref;
 use chrono::Utc;
 use eyre::{bail, eyre, Context, Result};
-use nomad_types::{ReceiptFormat, Signal, SignalPayload};
 use sha2::Digest;
 use tracing::{info, instrument, warn, Span};
 use zeroize::Zeroizing;
 
 use nomad_ethereum::EthClient;
+use nomad_types::{ReceiptFormat, Signal, SignalPayload};
 use nomad_vm::VmSocket;
 
 /// Process signals sampled from the pool
+#[instrument(skip_all, fields(token = ?signal.token_contract(), otel.status_code = 0), err)]
 pub async fn handle_signal(
     signal: SignalPayload,
     eth_client: &EthClient,
@@ -66,16 +67,22 @@ pub async fn handle_signal(
     )
     .await;
 
+    Span::current().record("otel.status_code", 1);
     Ok(())
 }
 
+/// Decrypt signal payloads into an executable request
 #[instrument(skip_all)]
 async fn solve_and_decrypt_signal(vm_socket: &VmSocket, signal: SignalPayload) -> Result<Signal> {
     match signal {
         SignalPayload::Unencrypted(signal) => Ok(signal),
-        SignalPayload::Encrypted(signal) => {
+        SignalPayload::Encrypted(mut signal) => {
             if signal.data.len() < 12 {
-                bail!("Data does not contain nonce prefix");
+                bail!("Encrypted data does not contain enough bytes for a nonce prefix");
+            }
+            if signal.data.len() < 24 {
+                // TODO: calculate minimum encrypted signal size
+                bail!("Encrypted data does not contain enough bytes for a signal");
             }
 
             info!("Executing puzzle in vm");
@@ -86,7 +93,6 @@ async fn solve_and_decrypt_signal(vm_socket: &VmSocket, signal: SignalPayload) -
                 .context("failed to execute puzzle")?;
 
             info!("Posting digest to relay");
-            // send post request to relay address with sha256(k2)
             let digest = sha2::Sha256::digest(k2);
             let k1 = reqwest::Client::new()
                 .post(signal.relay)
@@ -105,26 +111,28 @@ async fn solve_and_decrypt_signal(vm_socket: &VmSocket, signal: SignalPayload) -
             }
 
             info!("Decrypting data");
-            // sort k1 and k2 to determine order
+            // The first 12 bytes in data contain the nonce
+            let nonce_bytes = signal.data.split_to(12);
+            // The rest of the payload is our ciphertext
+            let mut data = signal.data.split_to(signal.data.len()).to_vec();
+            // sort k1 and k2 to determine hashing order
             let mut sorted_shares = [*array_ref![k1, 0, 32], k2];
             sorted_shares.sort();
             // Compute sha256(k1 . k2) for 256 bit encryption key
             let key = Zeroizing::new(sha2::Sha256::digest(sorted_shares.as_flattened()));
-            // The first 12 bytes in data contain the nonce
-            let nonce = array_ref![signal.data, 0, 12].into();
             // Decrypt signal with aes-gcm
-            let decrypted = aes_gcm::Aes256Gcm::new(&key)
-                .decrypt(nonce, &signal.data[12..])
+            aes_gcm::Aes256Gcm::new(&key)
+                .decrypt_in_place(array_ref![nonce_bytes, 0, 12].into(), &[], &mut data)
                 .map_err(|e| eyre!("Failed to decrypt data: {e}"))?;
 
-            // Decode unencrypted data as json
+            info!("Parsing raw signal");
             // TODO: consider supporting more encodings
             let raw_signal: Signal =
-                serde_json::from_slice(&decrypted).context("Failed to decode signal")?;
+                serde_json::from_slice(&data).context("Failed to decode signal")?;
             if raw_signal.token_contract != signal.token_contract {
                 warn!(
-                    "decrypted signal doesn't match encrypted signal's token contract: {}",
-                    raw_signal.token_contract
+                    inner_token = ?raw_signal.token_contract,
+                    "decrypted signal doesn't match encrypted signal's token contract",
                 );
             }
             Ok(raw_signal)
@@ -132,6 +140,7 @@ async fn solve_and_decrypt_signal(vm_socket: &VmSocket, signal: SignalPayload) -
     }
 }
 
+/// Send acknowledgement receipt to the signal producer
 #[instrument(skip(receipt))]
 async fn acknowledgement(url: &str, receipt: ReceiptFormat) {
     let res = reqwest::Client::new().post(url).json(&receipt).send().await;

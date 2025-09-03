@@ -15,6 +15,7 @@ nomad-rpc = { path = "../rpc" }
 nomad-types = { path = "../types" }
 
 alloy.workspace = true
+opentelemetry.workspace = true
 paste.workspace = true
 tokio.workspace = true
 tracing.workspace = true
@@ -30,7 +31,6 @@ workspace-filter = "0.1.0"
 tracing-error = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-opentelemetry = { version = "0.31", default-features = false }
-opentelemetry = "0.30"
 opentelemetry-appender-tracing = { version = "0.30" }
 opentelemetry-otlp = "0.30"
 opentelemetry_sdk = "0.30"

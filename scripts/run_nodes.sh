@@ -13,7 +13,7 @@ set -euo pipefail
 #   nomad [global-args] run [run-args]
 # Where:
 #   global-args: --config, --pk, --verbose
-#   run-args: --http-rpc, --rpc-port, --p2p-port, --peer, --bootstrap
+#   run-args: --eth-rpc, --rpc-port, --p2p-port, --peer, --bootstrap
 
 # Error trapping
 trap 'echo "[runner] ERROR: Script failed at line $LINENO. Exit code: $?" >&2' ERR
@@ -481,7 +481,7 @@ if [ -n "$EXTRA_ARGS" ]; then
 fi
 
 # Add run subcommand with CLI overrides
-NODE1_CMD="$NODE1_CMD run --http-rpc $HTTP_RPC --rpc-port $RPC_PORT_1 --p2p-port $P2P_PORT_1"
+NODE1_CMD="$NODE1_CMD run --eth-rpc $HTTP_RPC --rpc-port $RPC_PORT_1 --p2p-port $P2P_PORT_1"
 
 setsid stdbuf -oL env $NODE1_CMD \
   > >(tee "$LOG1" | sed -u "s/^/\x1b[${colors[0]}mNode 1:\x1b[0m /") 2>&1 &
@@ -533,7 +533,7 @@ for ((i=2; i<=NODE_COUNT; i++)); do
   fi
   
   # Add run subcommand with CLI overrides
-  NODE_CMD="$NODE_CMD run --http-rpc $HTTP_RPC --rpc-port $RPC_PORT --p2p-port $P2P_PORT --peer $PEER_ADDR"
+  NODE_CMD="$NODE_CMD run --eth-rpc $HTTP_RPC --rpc-port $RPC_PORT --p2p-port $P2P_PORT --peer $PEER_ADDR"
   
   # Create log file for this node to capture its address
   LOG_FILE=$(mktemp)
