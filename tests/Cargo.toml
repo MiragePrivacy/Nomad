@@ -1,0 +1,29 @@
+[package]
+name = "nomad-integration-tests"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+eyre.workspace = true
+futures.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+tracing.workspace = true
+tracing-subscriber = "0.3"
+alloy.workspace = true
+alloy-primitives.workspace = true
+reqwest.workspace = true
+
+# Nomad crates
+nomad-cli = { path = "../crates/cli" }
+nomad-node = { path = "../crates/node" }
+nomad-p2p = { path = "../crates/p2p" }
+nomad-pool = { path = "../crates/pool" }
+nomad-rpc = { path = "../crates/rpc" }
+nomad-types = { path = "../crates/types" }
+nomad-vm = { path = "../crates/vm" }
+nomad-ethereum = { path = "../crates/ethereum" }
+
+# Test utilities
+tempfile = "3.12"
