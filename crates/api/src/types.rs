@@ -1,13 +1,9 @@
-use aide::OperationOutput;
-use axum::{
-    http::StatusCode,
-    response::{IntoResponse, Response},
-};
-use nomad_types::{EncryptedSignal, Signal, SignalPayload};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// Unified type for either an encrypted or unencrypted signal
+use nomad_types::{EncryptedSignal, Signal, SignalPayload};
+
+/// Encrypted or raw signal
 #[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(untagged)]
 #[schemars(untagged)]
@@ -21,29 +17,6 @@ impl From<SignalRequest> for SignalPayload {
         match v {
             SignalRequest::Encrypted(s) => Self::Encrypted(s),
             SignalRequest::Unencrypted(s) => Self::Unencrypted(s),
-        }
-    }
-}
-
-#[derive(JsonSchema)]
-pub enum SignalResponse {
-    Success,
-    Failure,
-}
-
-impl OperationOutput for SignalResponse {
-    type Inner = String;
-}
-
-impl IntoResponse for SignalResponse {
-    fn into_response(self) -> axum::response::Response {
-        match self {
-            SignalResponse::Success => Response::new("Signal recieved".into()),
-            SignalResponse::Failure => {
-                let mut response = Response::new("Failed to ingest signal".into());
-                *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
-                response
-            }
         }
     }
 }
