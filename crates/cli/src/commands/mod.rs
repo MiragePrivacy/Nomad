@@ -52,6 +52,8 @@ impl_command! {
     /// Call RPC methods on a local or remote node.
     #[display = to_string]
     mod rpc;
+    /// Withdraw tokens from a signer address to a destination address
+    mod withdraw;
     /// Development commands
     #[display = to_string]
     mod dev;
