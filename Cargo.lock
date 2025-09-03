@@ -4001,6 +4001,7 @@ version = "0.1.0"
 dependencies = [
  "aes-gcm",
  "alloy",
+ "arrayref",
  "chrono",
  "eyre",
  "nomad-ethereum",
@@ -4013,10 +4014,12 @@ dependencies = [
  "reqwest",
  "resolve-path",
  "serde",
+ "serde_json",
  "sha2",
  "tokio",
  "toml 0.9.5",
  "tracing",
+ "zeroize",
 ]
 
 [[package]]
