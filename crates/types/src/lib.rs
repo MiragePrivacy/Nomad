@@ -30,40 +30,51 @@ impl SignalPayload {
 /// Fully encrypted signal containing the puzzle and relay address
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct EncryptedSignal {
+    /// Token contract to transfer
     #[schemars(
         with = "HexAddress",
         example = "0xBe41a9EC942d5b52bE07cC7F4D7E30E10e9B652A"
     )]
     pub token_contract: Address,
+    /// Relay address for submitting puzzle solutions to
     #[schemars(example = "http://your-server.com/relay")]
     pub relay: Url,
+    /// Hex-encoded puzzle bytes
     #[schemars(with = "HexBytes", example = 0x0)]
     pub puzzle: Bytes,
+    /// Hex-encoded AES-GCM encrypted data containing a json [`Signal`]
     #[schemars(with = "HexBytes", example = 0x0)]
     pub data: Bytes,
 }
 
-/// Decrypted signal
+/// Decrypted signal payload containing all information required to execute
 #[derive(Deserialize, Serialize, JsonSchema, Clone, PartialEq, Eq)]
 pub struct Signal {
+    /// Escrow contract to bond to and collect rewards from
     #[schemars(with = "HexAddress", example = "0x...")]
     pub escrow_contract: Address,
+    /// Token contract to transfer
     #[schemars(
         with = "HexAddress",
         example = "0xBe41a9EC942d5b52bE07cC7F4D7E30E10e9B652A"
     )]
     pub token_contract: Address,
+    /// Recipient for the transfer
     #[schemars(
         with = "HexAddress",
         example = "0x123453b4cE4B4bB18EAEc84C69eb745C83fC1b2F"
     )]
     pub recipient: Address,
+    /// Raw amount of tokens to transfer (including zeros)
     #[schemars(with = "U256String", example = "25000000")]
     pub transfer_amount: U256,
+    /// Reward amount for the node
     #[schemars(with = "U256String", example = "2000000")]
     pub reward_amount: U256,
+    /// Acknowledgement address for submitting the receipt to
     #[schemars(example = "http://your-server.com/ack")]
     pub acknowledgement_url: String,
+    /// Optional mappings for an obfuscated contract
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(example = None::<SelectorMapping>)]
     pub selector_mapping: Option<SelectorMapping>,
@@ -116,7 +127,6 @@ pub struct ReceiptFormat {
 mod hex_schema {
     use schemars::JsonSchema;
 
-    /// Schema type for hex-encoded bytes
     #[derive(JsonSchema)]
     #[schemars(transparent)]
     pub struct HexBytes(
@@ -125,7 +135,6 @@ mod hex_schema {
         pub String,
     );
 
-    /// Schema type for hex-encoded addresses
     #[derive(JsonSchema)]
     #[schemars(transparent)]
     pub struct HexAddress(
@@ -134,7 +143,6 @@ mod hex_schema {
         pub String,
     );
 
-    /// Schema type for hex-encoded selectors
     #[derive(JsonSchema)]
     #[schemars(transparent)]
     pub struct HexSelector(
@@ -143,7 +151,6 @@ mod hex_schema {
         pub String,
     );
 
-    /// Schema type for U256 as decimal string
     #[derive(JsonSchema)]
     #[schemars(transparent)]
     pub struct U256String(

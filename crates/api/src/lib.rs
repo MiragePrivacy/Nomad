@@ -2,7 +2,7 @@ use std::{sync::Arc, time::SystemTime};
 
 use aide::{
     axum::{
-        routing::{get_with, post_with},
+        routing::{get, get_with, post_with},
         ApiRouter, IntoApiResponse,
     },
     openapi::OpenApi,
@@ -18,7 +18,7 @@ use nomad_types::SignalPayload;
 
 pub mod types;
 
-use crate::types::{HealthResponse, SignalRequest};
+use crate::types::{HealthResponse, SignalRequest, SignalResponse};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
@@ -36,26 +36,27 @@ impl Default for ApiConfig {
 pub struct AppState {
     pub signal_tx: UnboundedSender<SignalPayload>,
     pub start_time: SystemTime,
+    pub is_bootstrap: bool,
+    pub read_only: bool,
 }
 
 async fn health(State(app_state): State<AppState>) -> impl IntoApiResponse {
     let uptime_seconds = app_state.start_time.elapsed().unwrap_or_default().as_secs();
-
-    let health_response = HealthResponse {
+    Json(HealthResponse {
         status: "healthy".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
-        node_type: "nomad".to_string(),
+        kind: "nomad".to_string(),
         uptime_seconds,
-    };
-
-    Json(health_response)
+        is_bootstrap: app_state.is_bootstrap,
+        read_only: app_state.read_only,
+    })
 }
 
 async fn signal(
     State(app_state): State<AppState>,
     Json(req): Json<SignalRequest>,
-) -> impl IntoApiResponse {
-    info!("Received");
+) -> (StatusCode, String) {
+    info!("Received signal");
     if app_state.signal_tx.send(req.into()).is_err() {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -73,7 +74,8 @@ fn health_docs(op: TransformOperation) -> TransformOperation {
 
 fn signal_docs(op: TransformOperation) -> TransformOperation {
     op.description("Submit a new signal to the node")
-        .response::<200, String>()
+        .response_with::<200, String, _>(|t| t.example("Signal acknowledged"))
+        .response_with::<500, String, _>(|t| t.example("Failed to broadcast signal"))
 }
 
 async fn serve_docs(Extension(api): Extension<Arc<OpenApi>>) -> impl IntoApiResponse {
@@ -82,6 +84,8 @@ async fn serve_docs(Extension(api): Extension<Arc<OpenApi>>) -> impl IntoApiResp
 
 pub async fn spawn_api_server(
     config: ApiConfig,
+    is_bootstrap: bool,
+    read_only: bool,
     signal_tx: UnboundedSender<SignalPayload>,
 ) -> eyre::Result<()> {
     debug!(?config);
@@ -96,6 +100,8 @@ pub async fn spawn_api_server(
         .route("/openapi.json", axum::routing::get(serve_docs))
         .layer(Extension(Arc::new(api)))
         .with_state(AppState {
+            is_bootstrap,
+            read_only,
             signal_tx,
             start_time: SystemTime::now(),
         });

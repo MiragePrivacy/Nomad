@@ -1,4 +1,4 @@
-use std::sync::atomic::AtomicBool;
+use std::sync::{atomic::AtomicBool, Arc};
 
 use alloy::signers::local::PrivateKeySigner;
 use eyre::Result;
@@ -26,19 +26,25 @@ pub struct NomadNode {
 impl NomadNode {
     /// Initialize the node with p2p, an eth client, and a vm worker thread
     pub async fn init(config: config::Config, signers: Vec<PrivateKeySigner>) -> Result<Self> {
-        // Spawn api server
-        let (signal_tx, signal_rx) = unbounded_channel();
-        let _ = spawn_api_server(config.api, signal_tx).await;
-
         // If we dont have two keys, don't process any signals
         let read_only = signers.is_empty();
         if read_only {
             warn!("No signers provided; running node in read-only mode!");
         }
-        let read_only = AtomicBool::new(read_only).into();
+
+        // Spawn api server
+        let (signal_tx, signal_rx) = unbounded_channel();
+        let _ = spawn_api_server(
+            config.api,
+            config.p2p.bootstrap.is_empty(),
+            read_only,
+            signal_tx,
+        )
+        .await;
 
         // Create shared signal pool and spawn p2p server
         let signal_pool = SignalPool::new(65535);
+        let read_only = Arc::new(AtomicBool::new(read_only));
         P2pNode::new(config.p2p, signal_pool.clone(), read_only, Some(signal_rx))?.spawn();
 
         // Build eth client

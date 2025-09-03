@@ -11,7 +11,11 @@ macro_rules! impl_contract_selectors {
             /// Selector mapping struct with compile-time validation and fast lookups
             #[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema, Clone, Debug, PartialEq, Eq)]
             pub struct [< $title Mappings >] {
-                $( #[serde(rename = $lit)] #[schemars(with = "HexSelector")] pub [< $id:lower >]: alloy_primitives::Selector ),*
+                $(
+                    #[serde(rename = $lit)]
+                    #[schemars(with = "HexSelector", description = stringify!($id))]
+                    pub [< $id:lower >]: alloy_primitives::Selector
+                ),*
             }
 
             impl [< $title Mappings >] {
