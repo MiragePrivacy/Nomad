@@ -6,10 +6,10 @@ use opentelemetry::{global::meter_provider, metrics::Counter};
 use tokio::sync::mpsc::unbounded_channel;
 use tracing::{error, info, warn};
 
+use nomad_api::spawn_api_server;
 use nomad_ethereum::{ClientError, EthClient};
 use nomad_p2p::P2pNode;
 use nomad_pool::SignalPool;
-use nomad_rpc::spawn_rpc_server;
 use nomad_vm::{NomadVm, VmSocket};
 
 pub mod config;
@@ -26,9 +26,9 @@ pub struct NomadNode {
 impl NomadNode {
     /// Initialize the node with p2p, an eth client, and a vm worker thread
     pub async fn init(config: config::Config, signers: Vec<PrivateKeySigner>) -> Result<Self> {
-        // Spawn rpc server
+        // Spawn api server
         let (signal_tx, signal_rx) = unbounded_channel();
-        let _ = spawn_rpc_server(config.rpc, signal_tx).await;
+        let _ = spawn_api_server(config.api, signal_tx).await;
 
         // If we dont have two keys, don't process any signals
         let read_only = signers.is_empty();

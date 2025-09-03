@@ -1,18 +1,21 @@
 use std::hash::{Hash, Hasher};
 
 use alloy_primitives::{Address, Bytes, U256};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
 pub use alloy_primitives as primitives;
 
 mod selectors;
+
+pub use hex_schema::*;
 pub use selectors::*;
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SignalPayload {
-    Encrypted(EncryptedSignal),
     Unencrypted(Signal),
+    Encrypted(EncryptedSignal),
 }
 
 impl SignalPayload {
@@ -25,23 +28,44 @@ impl SignalPayload {
 }
 
 /// Fully encrypted signal containing the puzzle and relay address
-#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct EncryptedSignal {
+    #[schemars(
+        with = "HexAddress",
+        example = "0xBe41a9EC942d5b52bE07cC7F4D7E30E10e9B652A"
+    )]
     pub token_contract: Address,
+    #[schemars(example = "http://your-server.com/relay")]
     pub relay: Url,
+    #[schemars(with = "HexBytes", example = 0x0)]
     pub puzzle: Bytes,
+    #[schemars(with = "HexBytes", example = 0x0)]
     pub data: Bytes,
 }
 
 /// Decrypted signal
-#[derive(Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, JsonSchema, Clone, PartialEq, Eq)]
 pub struct Signal {
+    #[schemars(with = "HexAddress", example = "0x...")]
     pub escrow_contract: Address,
+    #[schemars(
+        with = "HexAddress",
+        example = "0xBe41a9EC942d5b52bE07cC7F4D7E30E10e9B652A"
+    )]
     pub token_contract: Address,
+    #[schemars(
+        with = "HexAddress",
+        example = "0x123453b4cE4B4bB18EAEc84C69eb745C83fC1b2F"
+    )]
     pub recipient: Address,
+    #[schemars(with = "U256String", example = "25000000")]
     pub transfer_amount: U256,
+    #[schemars(with = "U256String", example = "2000000")]
     pub reward_amount: U256,
+    #[schemars(example = "http://your-server.com/ack")]
     pub acknowledgement_url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(example = None::<SelectorMapping>)]
     pub selector_mapping: Option<SelectorMapping>,
 }
 
@@ -87,4 +111,44 @@ pub struct ReceiptFormat {
     pub approval_transaction_hash: String,
     pub transfer_transaction_hash: String,
     pub collection_transaction_hash: String,
+}
+
+mod hex_schema {
+    use schemars::JsonSchema;
+
+    /// Schema type for hex-encoded bytes
+    #[derive(JsonSchema)]
+    #[schemars(transparent)]
+    pub struct HexBytes(
+        #[schemars(regex(pattern = r"^0x[0-9a-fA-F]*$"))]
+        #[schemars(description = "Hex-encoded bytes as a string (e.g., '0x1234abcd')")]
+        pub String,
+    );
+
+    /// Schema type for hex-encoded addresses
+    #[derive(JsonSchema)]
+    #[schemars(transparent)]
+    pub struct HexAddress(
+        #[schemars(regex(pattern = r"^0x[0-9a-fA-F]{40}$"))]
+        #[schemars(description = "Hex-encoded Ethereum address (20 bytes, e.g., '0x1234...abcd')")]
+        pub String,
+    );
+
+    /// Schema type for hex-encoded selectors
+    #[derive(JsonSchema)]
+    #[schemars(transparent)]
+    pub struct HexSelector(
+        #[schemars(regex(pattern = r"^0x[0-9a-fA-F]{8}$"))]
+        #[schemars(description = "Hex-encoded function selector (4 bytes, e.g., '0x12345678')")]
+        pub String,
+    );
+
+    /// Schema type for U256 as decimal string
+    #[derive(JsonSchema)]
+    #[schemars(transparent)]
+    pub struct U256String(
+        #[schemars(regex(pattern = r"^[0-9]+$"))]
+        #[schemars(description = "U256 value as a decimal string (e.g., '1234567890')")]
+        pub String,
+    );
 }

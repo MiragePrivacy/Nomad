@@ -6,16 +6,16 @@ use resolve_path::PathResolveExt;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
+use nomad_api::ApiConfig;
 use nomad_ethereum::EthConfig;
 use nomad_p2p::P2pConfig;
-use nomad_rpc::RpcConfig;
 
 /// Top level config layout
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 #[serde(default)]
 pub struct Config {
     pub p2p: P2pConfig,
-    pub rpc: RpcConfig,
+    pub api: ApiConfig,
     pub vm: VmConfig,
     pub eth: EthConfig,
     pub otlp: OtlpConfig,

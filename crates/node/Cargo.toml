@@ -8,7 +8,7 @@ repository.workspace = true
 nomad-ethereum = { path = "../ethereum" }
 nomad-p2p = { path = "../p2p" }
 nomad-pool = { path = "../pool" }
-nomad-rpc = { path = "../rpc" }
+nomad-api = { path = "../api" }
 nomad-types = { path = "../types" }
 nomad-vm = { path = "../vm" }
 
