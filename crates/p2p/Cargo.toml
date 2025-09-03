@@ -9,12 +9,12 @@ nomad-pool = { path = "../pool" }
 
 eyre.workspace = true
 futures.workspace = true
+humantime-serde.workspace = true
 serde.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 
 flexbuffers = "25.2"
-humantime-serde = "1.1.1"
 
 [dependencies.libp2p]
 version = "0.56"

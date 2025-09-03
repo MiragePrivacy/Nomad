@@ -80,6 +80,20 @@ impl NomadNode {
 
     /// Run the node
     pub async fn run(self) -> Result<()> {
+        // Spawn background balance monitoring task if Uniswap is enabled
+        if let Some(check_interval) = self.eth_client.swap_check_interval() {
+            let eth_client_clone = self.eth_client.clone();
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(check_interval);
+                loop {
+                    interval.tick().await;
+                    if let Err(e) = eth_client_clone.maintain_eth_balances().await {
+                        warn!("Failed to maintain ETH balances: {}", e);
+                    }
+                }
+            });
+        }
+
         loop {
             if let Err(e) = self.next().await {
                 if let Ok(ClientError::NotEnoughEth(_, accounts, need)) = e.downcast() {
