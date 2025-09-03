@@ -3794,6 +3794,7 @@ dependencies = [
  "axum",
  "eyre",
  "nomad-types",
+ "reqwest",
  "schemars 0.9.0",
  "serde",
  "tokio",

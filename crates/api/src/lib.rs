@@ -56,6 +56,38 @@ async fn signal(
     State(app_state): State<AppState>,
     Json(req): Json<SignalRequest>,
 ) -> (StatusCode, String) {
+    // Validate signal
+    if let SignalRequest::Encrypted(signal) = &req {
+        // Ensure relay is up
+        let res = reqwest::Client::new()
+            .get(signal.relay.clone())
+            .send()
+            .await
+            .and_then(|r| r.error_for_status());
+        if let Err(e) = res {
+            return (
+                StatusCode::BAD_REQUEST,
+                format!("Relay is not accessible: {e}"),
+            );
+        };
+
+        // simple check to make sure we have 12 byte nonce + some encrypted data in the signal
+        if signal.data.len() < 24 {
+            return (
+                StatusCode::BAD_REQUEST,
+                "Encrypted data is not big enough for the nonce and signal data".to_string(),
+            );
+        }
+
+        // simple check to make sure the puzzle is at least 500 bytes
+        if signal.puzzle.len() < 500 {
+            return (
+                StatusCode::BAD_REQUEST,
+                "Signal puzzle must have at least 500 bytes".to_string(),
+            );
+        }
+    }
+
     info!("Received signal");
     if app_state.signal_tx.send(req.into()).is_err() {
         (
