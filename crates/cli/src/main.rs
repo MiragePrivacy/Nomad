@@ -1,14 +1,13 @@
-use std::{net::IpAddr, path::PathBuf, time::Duration};
+use std::{net::IpAddr, path::PathBuf};
 
 use alloy::signers::local::PrivateKeySigner;
 use clap::{ArgAction, Parser};
 use color_eyre::eyre::{bail, Context, Result};
 use opentelemetry::KeyValue;
 use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
-use opentelemetry_otlp::{MetricExporter, SpanExporter, WithExportConfig, WithHttpConfig};
+use opentelemetry_otlp::{SpanExporter, WithExportConfig, WithHttpConfig};
 use opentelemetry_sdk::{
     logs::SdkLoggerProvider,
-    metrics::{PeriodicReader, SdkMeterProvider},
     trace::{Sampler, SdkTracerProvider},
     Resource,
 };
@@ -59,16 +58,13 @@ impl Cli {
     /// Run the app
     async fn execute(self) -> Result<()> {
         let config = Config::load(&self.config)?;
-        let (tracer, meter) = self.setup_logging(&config).await?;
+        let tracer = self.setup_logging(&config).await?;
 
         let signers = self.build_signers()?;
         self.cmd.execute(config, signers).await?;
 
         if let Some(provider) = tracer {
             provider.shutdown()?;
-        }
-        if let Some(meter) = meter {
-            meter.shutdown()?;
         }
 
         Ok(())
@@ -107,10 +103,7 @@ impl Cli {
     }
 
     // Setup logging filters and subscriber
-    pub async fn setup_logging(
-        &self,
-        config: &Config,
-    ) -> Result<(Option<SdkTracerProvider>, Option<SdkMeterProvider>)> {
+    pub async fn setup_logging(&self, config: &Config) -> Result<Option<SdkTracerProvider>> {
         // Setup console logging
         let filter = std::env::var("RUST_LOG").unwrap_or_else(|_| {
             // Default which is directed by the verbosity flag
@@ -122,9 +115,7 @@ impl Cli {
                 _ => "trace".into(),
             }
         });
-        let filter = EnvFilter::builder()
-            .parse_lossy(filter)
-            .add_directive("opentelemetry=info".parse().unwrap());
+        let filter = EnvFilter::builder().parse_lossy(filter);
         let env_filter = filter.to_string();
         let console = tracing_subscriber::fmt::layer()
             .with_target(self.verbose > 2)
@@ -139,7 +130,7 @@ impl Cli {
 
         let mut logger = None;
         let mut tracer = None;
-        let mut metrics = None;
+
         if let Some(url) = &config.otlp.url {
             // Create a Resource that captures information about the entity for which telemetry is recorded.
             let mut resource = Resource::builder()
@@ -163,13 +154,11 @@ impl Cli {
             }
             let resource = resource.build();
 
-            let client = reqwest::Client::new();
             if config.otlp.logs {
                 let exporter = opentelemetry_otlp::LogExporter::builder()
                     .with_http()
                     .with_headers(config.otlp.headers.clone())
                     .with_endpoint(url.join("v1/logs").unwrap().as_str())
-                    .with_http_client(client.clone())
                     .build()?;
                 let provider = SdkLoggerProvider::builder()
                     .with_simple_exporter(exporter)
@@ -189,7 +178,6 @@ impl Cli {
                     .with_http()
                     .with_headers(config.otlp.headers.clone())
                     .with_endpoint(url.join("v1/traces").unwrap().as_str())
-                    .with_http_client(client.clone())
                     .build()?;
                 let provider = SdkTracerProvider::builder()
                     .with_simple_exporter(exporter)
@@ -199,24 +187,6 @@ impl Cli {
                 opentelemetry::global::set_tracer_provider(provider.clone());
                 tracer = Some(provider);
             }
-
-            if config.otlp.metrics {
-                let exporter = MetricExporter::builder()
-                    .with_http()
-                    .with_headers(config.otlp.headers.clone())
-                    .with_endpoint(url.join("v1/metrics").unwrap().as_str())
-                    .build()?;
-                let provider = SdkMeterProvider::builder()
-                    .with_reader(
-                        PeriodicReader::builder(exporter)
-                            .with_interval(Duration::from_secs(10))
-                            .build(),
-                    )
-                    .with_resource(resource)
-                    .build();
-                opentelemetry::global::set_meter_provider(provider.clone());
-                metrics = Some(provider);
-            }
         }
 
         registry().with(console).with(logger).init();
@@ -224,7 +194,7 @@ impl Cli {
         if let Some(ip) = ip {
             info!("Remote Address: {ip}");
         }
-        Ok((tracer, metrics))
+        Ok(tracer)
     }
 }
 

@@ -93,7 +93,7 @@ impl NomadNode {
     /// Handle the next signal from the pool (blocking until one is available)
     pub async fn next(&self) -> Result<()> {
         let signal = self.signal_pool.sample().await;
-        execute::handle_signal(signal, &self.eth_client, &self.vm_socket)
+        execute::execute_signal(signal, &self.eth_client, &self.vm_socket)
             .await
             .inspect(|_| {
                 info!("Successfully executed signal");

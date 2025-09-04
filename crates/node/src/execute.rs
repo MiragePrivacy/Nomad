@@ -17,7 +17,7 @@ use crate::_OTEL_TRACER_NAME;
 
 /// Process signals sampled from the pool
 #[instrument(skip_all, fields(token = signal.token_contract()), err)]
-pub async fn handle_signal(
+pub async fn execute_signal(
     signal: SignalPayload,
     eth_client: &EthClient,
     vm_socket: &VmSocket,
