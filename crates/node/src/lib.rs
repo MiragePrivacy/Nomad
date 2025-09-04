@@ -3,6 +3,7 @@ use std::sync::{atomic::AtomicBool, Arc};
 use alloy::signers::local::PrivateKeySigner;
 use eyre::Result;
 use opentelemetry::{global::meter_provider, metrics::Counter};
+use otel_instrument::tracer_name;
 use tokio::sync::mpsc::unbounded_channel;
 use tracing::{error, info, warn};
 
@@ -14,6 +15,8 @@ use nomad_vm::{NomadVm, VmSocket};
 
 pub mod config;
 mod execute;
+
+tracer_name!("nomad");
 
 pub struct NomadNode {
     signal_pool: SignalPool,

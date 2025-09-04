@@ -1,6 +1,9 @@
 use affair::{DedicatedThread, Executor, Socket, Worker};
+use opentelemetry::Context;
+use otel_instrument::instrument;
+use otel_instrument::tracer_name;
 use thiserror::Error;
-use tracing::{instrument, trace, Span};
+use tracing::trace;
 
 pub use crate::ops::*;
 pub use crate::program::*;
@@ -9,6 +12,8 @@ mod ops;
 mod program;
 #[cfg(test)]
 mod tests;
+
+tracer_name!("nomad");
 
 /// Fixed memory size available to the VM
 pub const MEMORY_SIZE: usize = 1024 * 1024 * 1024;
@@ -53,11 +58,11 @@ pub struct NomadVm {
 }
 
 impl Worker for NomadVm {
-    type Request = (Vec<u8>, Span);
+    type Request = (Vec<u8>, Context);
     type Response = Result<[u8; 32], VmError>;
 
-    #[instrument(name = "vm", skip_all, parent = span)]
-    fn handle(&mut self, (program, span): Self::Request) -> Self::Response {
+    #[instrument(name = "vm", skip_all, err, parent = ctx)]
+    fn handle(&mut self, (program, ctx): Self::Request) -> Self::Response {
         trace!("Received {} byte program", program.len());
         self.execute(program)
     }
@@ -198,13 +203,13 @@ impl NomadVm {
                     self.pc += 1;
                 }
             }
-            Instruction::Print(bitmap) => {
+            Instruction::Print(_bitmap) => {
                 #[cfg(debug_assertions)]
                 {
                     print!("DEBUG: ");
                     let mut first = true;
                     for reg_idx in 0..8u8 {
-                        if (bitmap & (1 << reg_idx)) != 0 {
+                        if (_bitmap & (1 << reg_idx)) != 0 {
                             if !first {
                                 print!(", ");
                             }
@@ -214,8 +219,6 @@ impl NomadVm {
                     }
                     println!();
                 }
-                #[cfg(not(debug_assertions))]
-                let _ = bitmap;
                 self.pc += 1;
             }
             Instruction::Halt() => {}

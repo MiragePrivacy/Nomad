@@ -7,11 +7,12 @@ use alloy::{
     rpc::types::TransactionReceipt,
 };
 use alloy_trie::{proof::ProofRetainer, root::adjust_index_for_rlp, HashBuilder, Nibbles};
-use tracing::{instrument, trace};
+use otel_instrument::instrument;
+use tracing::trace;
 
 use nomad_types::Signal;
 
-use crate::{ClientError, Escrow, EthClient, IERC20};
+use crate::{ClientError, Escrow, EthClient, IERC20, _OTEL_TRACER_NAME};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProofError {
@@ -32,9 +33,9 @@ pub enum ProofError {
 impl EthClient {
     /// Creates a new `ProofInput` with the given block hash, transaction index, and optional log index.
     #[instrument(skip_all, fields(
-        block_num = ?receipt.block_number.unwrap(),
-        block_hash = ?receipt.block_hash.unwrap(),
-        tx = ?receipt.transaction_hash
+        block_num = receipt.block_number.unwrap(),
+        block_hash = receipt.block_hash.unwrap(),
+        tx = receipt.transaction_hash
     ))]
     pub async fn generate_proof(
         &self,

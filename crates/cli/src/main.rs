@@ -3,7 +3,7 @@ use std::{net::IpAddr, path::PathBuf, time::Duration};
 use alloy::signers::local::PrivateKeySigner;
 use clap::{ArgAction, Parser};
 use color_eyre::eyre::{bail, Context, Result};
-use opentelemetry::{trace::TracerProvider, KeyValue};
+use opentelemetry::KeyValue;
 use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
 use opentelemetry_otlp::{MetricExporter, SpanExporter, WithExportConfig, WithHttpConfig};
 use opentelemetry_sdk::{
@@ -14,8 +14,6 @@ use opentelemetry_sdk::{
 };
 use opentelemetry_semantic_conventions::{resource::SERVICE_VERSION, SCHEMA_URL};
 use tracing::{info, trace};
-use tracing_error::ErrorLayer;
-use tracing_opentelemetry::OpenTelemetryLayer;
 use tracing_subscriber::{
     layer::SubscriberExt, registry, util::SubscriberInitExt, EnvFilter, Layer,
 };
@@ -125,7 +123,6 @@ impl Cli {
         let ip = self.global_ip().await?;
 
         let mut logger = None;
-        let mut tracer = None;
         if let Some(url) = &config.otlp.url {
             // Create a Resource that captures information about the entity for which telemetry is recorded.
             let mut resource = Resource::builder()
@@ -181,17 +178,7 @@ impl Cli {
                     .with_sampler(Sampler::AlwaysOn)
                     .with_resource(resource.clone())
                     .build();
-                tracer = Some(
-                    OpenTelemetryLayer::new(provider.tracer(env!("CARGO_BIN_NAME")))
-                        .with_threads(false)
-                        .with_location(false)
-                        .with_tracked_inactivity(false)
-                        .with_error_records_to_exceptions(true)
-                        .with_filter(
-                            EnvFilter::builder()
-                                .parse_lossy(workspace_filter!("trace", "debug,nomad={level}")),
-                        ),
-                );
+                opentelemetry::global::set_tracer_provider(provider);
             }
 
             if config.otlp.metrics {
@@ -213,13 +200,7 @@ impl Cli {
             }
         }
 
-        registry()
-            .with(ErrorLayer::default())
-            .with(console)
-            .with(logger)
-            .with(tracer)
-            .init();
-
+        registry().with(console).with(logger).init();
         trace!(env_filter);
         if let Some(ip) = ip {
             info!("Remote Address: {ip}");

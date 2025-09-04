@@ -19,11 +19,15 @@ use alloy::{
     transports::{RpcError, TransportErrorKind},
 };
 use nomad_types::{ObfuscatedCaller, Signal};
+use opentelemetry::KeyValue;
+use otel_instrument::{instrument, tracer_name};
 use serde::{Deserialize, Serialize};
-use tracing::{debug, field::Empty, info, instrument, warn, Span};
+use tracing::{debug, info, warn};
 use url::Url;
 
 mod proof;
+
+tracer_name!("nomad");
 
 sol! {
     #[sol(rpc)]
@@ -204,7 +208,7 @@ impl EthClient {
     /// Validate the escrow contract for a given signal. Checks:
     /// - bytecode on-chain should match expected obfuscation output
     /// - escrow contract is not bonded yet
-    #[instrument(skip_all)]
+    #[instrument(skip_all, err)]
     pub async fn validate_contract(&self, signal: &Signal) -> Result<(), ClientError> {
         if let Some(ref selector_mapping) = signal.selector_mapping {
             // This is an obfuscated contract
@@ -252,7 +256,7 @@ impl EthClient {
     }
 
     /// Wait for at least a given number of given accounts to have enough eth
-    #[instrument(skip_all)]
+    #[instrument(skip_all, err)]
     pub async fn wait_for_eth(&self, accounts: &[usize], need: usize) -> Result<(), ClientError> {
         for idx in accounts {
             let account = self.accounts[*idx];
@@ -280,7 +284,7 @@ impl EthClient {
     }
 
     /// Get accounts above minimum eth balance, or return error if not at least 2
-    #[instrument(skip_all)]
+    #[instrument(skip_all, err)]
     async fn get_active_accounts(&self) -> Result<Vec<usize>, ClientError> {
         let mut active = Vec::new();
         let mut inactive = Vec::new();
@@ -302,7 +306,7 @@ impl EthClient {
     }
 
     /// Get contract balances
-    #[instrument(skip_all, fields(?accounts))]
+    #[instrument(skip_all, fields(accounts = accounts), err)]
     async fn token_balances(
         &self,
         accounts: &[usize],
@@ -320,7 +324,7 @@ impl EthClient {
     }
 
     /// Select ideal accounts for EOA 1 and 2
-    #[instrument(skip_all)]
+    #[instrument(skip_all, err)]
     pub async fn select_accounts(&self, signal: Signal) -> Result<[usize; 2], ClientError> {
         if self.accounts.is_empty() {
             return Err(ClientError::ReadOnly);
@@ -359,14 +363,13 @@ impl EthClient {
     }
 
     /// Execute a bond call on the escrow contract. Now handles obfuscated contracts.
-    #[instrument(skip_all, fields(eoa_1 = ?self.accounts[eoa_1], tx_approve = Empty, tx_bond = Empty))]
+    #[instrument(skip_all, fields(eoa_1 = self.accounts[eoa_1]), err)]
     pub async fn bond(
         &self,
         provider: impl Provider,
         eoa_1: usize,
         signal: Signal,
     ) -> Result<[TransactionReceipt; 2], ClientError> {
-        let span = Span::current();
         // Compute minimum bond amount
         let bond_amount = signal
             .reward_amount
@@ -383,7 +386,12 @@ impl EthClient {
             .await?
             .get_receipt()
             .await?;
-        span.record("tx_approve", approve.transaction_hash.to_string());
+        opentelemetry::trace::get_active_span(|span| {
+            span.set_attribute(KeyValue::new(
+                "tx_approve",
+                approve.transaction_hash.to_string(),
+            ));
+        });
 
         // Try to bond
         let bond_result = if let Some(ref selector_mapping) = signal.selector_mapping {
@@ -427,7 +435,12 @@ impl EthClient {
         // If bond failed, revert approval to prevent stuck approvals
         match bond_result {
             Ok(bond_receipt) => {
-                span.record("tx_bond", bond_receipt.transaction_hash.to_string());
+                opentelemetry::trace::get_active_span(|span| {
+                    span.set_attribute(KeyValue::new(
+                        "tx_bond",
+                        bond_receipt.transaction_hash.to_string(),
+                    ));
+                });
                 info!("Successfully bonded to escrow");
                 Ok([approve, bond_receipt])
             }
@@ -450,7 +463,7 @@ impl EthClient {
     }
 
     /// Construct and execute a transfer call from the signal
-    #[instrument(skip_all, fields(eoa_2 = ?self.accounts[eoa_2], tx_transfer = Empty))]
+    #[instrument(skip_all, fields(eoa_2 = self.accounts[eoa_2]), err)]
     pub async fn transfer(
         &self,
         provider: impl Provider,
@@ -464,12 +477,17 @@ impl EthClient {
             .await?
             .get_receipt()
             .await?;
-        Span::current().record("tx_transfer", receipt.transaction_hash.to_string());
+        opentelemetry::trace::get_active_span(|span| {
+            span.set_attribute(KeyValue::new(
+                "tx_transfer",
+                receipt.transaction_hash.to_string(),
+            ));
+        });
         Ok(receipt)
     }
 
     /// Collect a reward by submitting proof for a signal
-    #[instrument(skip_all, fields(eoa_1 = ?self.accounts[eoa_1], tx_collect = Empty))]
+    #[instrument(skip_all, fields(eoa_1 = self.accounts[eoa_1]), err)]
     pub async fn collect(
         &self,
         provider: impl Provider,
@@ -478,8 +496,7 @@ impl EthClient {
         proof: Escrow::ReceiptProof,
         block: u64,
     ) -> Result<TransactionReceipt, ClientError> {
-        let span = Span::current();
-        if let Some(ref selector_mapping) = signal.selector_mapping {
+        let receipt = if let Some(ref selector_mapping) = signal.selector_mapping {
             // Obfuscated contract - use raw call with obfuscated selector
             info!("Collecting from obfuscated escrow contract");
 
@@ -498,23 +515,27 @@ impl EthClient {
                 .await?
                 .get_receipt()
                 .await?;
-            span.record("tx_collect", receipt.transaction_hash.to_string());
-
             info!("Successfully collected from obfuscated escrow");
-            return Ok(receipt);
-        }
+            receipt
+        } else {
+            // Standard contract call for non-obfuscated contracts
+            let receipt = Escrow::new(signal.escrow_contract, provider)
+                .collect(proof, U256::from(block))
+                .from(self.accounts[eoa_1])
+                .send()
+                .await?
+                .get_receipt()
+                .await?;
+            info!("Successfully collected from escrow");
+            receipt
+        };
 
-        // Standard contract call for non-obfuscated contracts
-        let receipt = Escrow::new(signal.escrow_contract, provider)
-            .collect(proof, U256::from(block))
-            .from(self.accounts[eoa_1])
-            .send()
-            .await?
-            .get_receipt()
-            .await?;
-        span.record("tx_collect", receipt.transaction_hash.to_string());
-        info!("Successfully collected from escrow");
-
+        opentelemetry::trace::get_active_span(|span| {
+            span.set_attribute(KeyValue::new(
+                "tx_collect",
+                receipt.transaction_hash.to_string(),
+            ));
+        });
         Ok(receipt)
     }
 }

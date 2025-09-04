@@ -7,6 +7,8 @@ edition.workspace = true
 nomad-types = { path = "../types" }
 
 alloy.workspace = true
+opentelemetry.workspace = true
+otel-instrument.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true

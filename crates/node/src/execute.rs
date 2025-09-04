@@ -1,17 +1,21 @@
 use aes_gcm::{aead::AeadMutInPlace, KeyInit};
 use arrayref::array_ref;
 use chrono::Utc;
-use eyre::{bail, eyre, Context, Result};
+use eyre::{bail, eyre, Context as _, Result};
+use opentelemetry::Context;
+use otel_instrument::instrument;
 use sha3::Digest;
-use tracing::{info, instrument, warn, Span};
+use tracing::{info, warn};
 use zeroize::Zeroizing;
 
 use nomad_ethereum::EthClient;
 use nomad_types::{ReceiptFormat, Signal, SignalPayload};
 use nomad_vm::VmSocket;
 
+use crate::_OTEL_TRACER_NAME;
+
 /// Process signals sampled from the pool
-#[instrument(skip_all, fields(token = ?signal.token_contract(), otel.status_code = 0), err)]
+#[instrument(skip_all, fields(token = signal.token_contract()), err)]
 pub async fn handle_signal(
     signal: SignalPayload,
     eth_client: &EthClient,
@@ -65,9 +69,8 @@ pub async fn handle_signal(
             collection_transaction_hash: collect.transaction_hash.to_string(),
         },
     )
-    .await;
+    .await?;
 
-    Span::current().record("otel.status_code", 1);
     Ok(())
 }
 
@@ -87,7 +90,7 @@ async fn solve_and_decrypt_signal(vm_socket: &VmSocket, signal: SignalPayload) -
 
             info!("Executing puzzle in vm");
             let k2 = vm_socket
-                .run((signal.puzzle.to_vec(), Span::current()))
+                .run((signal.puzzle.to_vec(), Context::current()))
                 .await
                 .map_err(|e| eyre!("failed to receive puzzle response: {e}"))?
                 .context("failed to execute puzzle")?;
@@ -142,10 +145,11 @@ async fn solve_and_decrypt_signal(vm_socket: &VmSocket, signal: SignalPayload) -
 
 /// Send acknowledgement receipt to the signal producer
 #[instrument(skip(receipt))]
-async fn acknowledgement(url: &str, receipt: ReceiptFormat) {
+async fn acknowledgement(url: &str, receipt: ReceiptFormat) -> Result<()> {
     let res = reqwest::Client::new().post(url).json(&receipt).send().await;
     match res {
         Err(error) => warn!(?error, "Failed to send receipt"),
         Ok(_) => info!("Receipt sent successfully"),
     }
+    Ok(())
 }

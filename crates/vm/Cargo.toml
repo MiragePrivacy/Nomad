@@ -4,6 +4,8 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+opentelemetry.workspace = true
+otel-instrument.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
 affair = "0.1.2"

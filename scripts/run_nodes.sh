@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Script to run multiple Nomad nodes with the new CLI structure
-# 
+#
 # Usage examples:
 #   ./run_nodes.sh                              # Basic usage
 #   ./run_nodes.sh -vv                          # With verbose logging
@@ -13,7 +13,7 @@ set -euo pipefail
 #   nomad [global-args] run [run-args]
 # Where:
 #   global-args: --config, --pk, --verbose
-#   run-args: --eth-rpc, --rpc-port, --p2p-port, --peer, --bootstrap
+#   run-args: --eth-rpc, --api-port, --p2p-port, --peer, --bootstrap
 
 # Error trapping
 trap 'echo "[runner] ERROR: Script failed at line $LINENO. Exit code: $?" >&2' ERR
@@ -28,33 +28,33 @@ debug_log() {
 # Check dependencies
 check_dependencies() {
   debug_log "Checking dependencies..."
-  
+
   local missing_deps=0
-  
+
   # Check for jq
   if ! command -v jq &> /dev/null; then
     echo "[runner] ERROR: jq is not installed. Please install jq."
     ((missing_deps++))
   fi
-  
+
   # Check for forge
   if ! command -v forge &> /dev/null; then
     echo "[runner] ERROR: forge (foundry) is not installed."
     ((missing_deps++))
   fi
-  
+
   # Check for cast
   if ! command -v cast &> /dev/null; then
     echo "[runner] ERROR: cast (foundry) is not installed."
     ((missing_deps++))
   fi
-  
+
   # Check for curl
   if ! command -v curl &> /dev/null; then
     echo "[runner] ERROR: curl is not installed."
     ((missing_deps++))
   fi
-  
+
   if [ $missing_deps -gt 0 ]; then
     echo "[runner] ERROR: $missing_deps missing dependencies. Exiting."
     exit 1
@@ -135,9 +135,9 @@ run_nomad_faucet() {
   local private_key=$1
   local token_contract=$2
   local description=$3
-  
+
   echo "[runner] Running nomad faucet for $description using contract $token_contract"
-  
+
   # Use the new faucet subcommand
   if $BIN --pk "$private_key" faucet "$token_contract" >/dev/null 2>&1; then
     echo "[runner] Nomad faucet successful"
@@ -154,20 +154,20 @@ run_nomad_faucet() {
 call_token_faucet() {
   local private_key=$1
   local description=$2
-  
+
   echo "[runner] Calling token faucet for $description..."
-  
+
   # Call the mint function on the token contract (each call gives 1000 tokens)
   if cast send --private-key "$private_key" --rpc-url "$HTTP_RPC" \
     "$TOKEN_CONTRACT" "mint()" >/dev/null 2>&1; then
     echo "[runner] Faucet call successful - 1000 tokens minted"
-    
+
     # Get updated balance to confirm
     local address=$(cast wallet address "$private_key" 2>/dev/null)
     local raw_balance=$(cast call "$TOKEN_CONTRACT" "balanceOf(address)(uint256)" "$address" --rpc-url "$HTTP_RPC" 2>/dev/null || echo "0")
     local new_balance=$(echo "$raw_balance" | awk '{print $1}')
     echo "[runner] New token balance: $new_balance tokens"
-    
+
     # Check if we need more tokens (may need multiple faucet calls)
     local min_tokens="10000000000"  # 10000 tokens (assuming 6 decimals)
     if (( new_balance >= min_tokens )); then
@@ -190,7 +190,7 @@ call_token_faucet() {
           return 1
         fi
       done
-      
+
       if (( new_balance >= min_tokens )); then
         echo "[runner] Sufficient tokens after $calls_made faucet calls"
         return 0
@@ -208,18 +208,18 @@ call_token_faucet() {
 check_balance() {
   local private_key=$1
   local description=$2
-  
+
   # Get address from private key
   local address=$(cast wallet address "$private_key" 2>/dev/null || echo "ERROR")
   if [ "$address" = "ERROR" ]; then
     echo "[runner] ERROR: Invalid private key for $description"
     return 1
   fi
-  
+
   # Get ETH balance
   local eth_balance=$(cast balance "$address" --rpc-url "$HTTP_RPC" 2>/dev/null || echo "0")
   local eth_balance_ether=$(cast to-unit "$eth_balance" ether 2>/dev/null || echo "0")
-  
+
   # Get token balance if TOKEN_CONTRACT is set
   local token_balance="0"
   if [ -n "$TOKEN_CONTRACT" ]; then
@@ -227,39 +227,39 @@ check_balance() {
     # Extract just the numeric part before any space or bracket
     token_balance=$(echo "$raw_balance" | awk '{print $1}')
   fi
-  
+
   echo "[runner] $description ($address): ${eth_balance_ether} ETH, ${token_balance} tokens"
-  
+
   # Check minimum balances (0.01 ETH, 10000 tokens)
   local min_eth_wei="10000000000000000"  # 0.01 ETH in wei
   local min_tokens="10000000000"         # 10000 tokens (assuming 6 decimals)
-  
+
   local has_sufficient_eth=false
   local has_sufficient_tokens=false
-  
+
   if (( eth_balance >= min_eth_wei )); then
     has_sufficient_eth=true
   fi
-  
+
   if (( token_balance >= min_tokens )); then
     has_sufficient_tokens=true
   fi
-  
+
   if [ "$has_sufficient_eth" = false ] || [ "$has_sufficient_tokens" = false ]; then
     echo "[runner] WARNING: $description has insufficient balance"
     [ "$has_sufficient_eth" = false ] && echo "  - Need at least 0.01 ETH for gas fees"
     [ "$has_sufficient_tokens" = false ] && echo "  - Need at least 10000 tokens for escrow funding"
-    
+
     # Try to use faucet for insufficient tokens
     if [ "$has_sufficient_tokens" = false ] && [ "$has_sufficient_eth" = true ]; then
       echo "[runner] Attempting to use token faucet for $description"
       call_token_faucet "$private_key" "$description"
       return $?
     fi
-    
+
     return 1
   fi
-  
+
   return 0
 }
 
@@ -269,11 +269,11 @@ validate_node_balances() {
     echo "[runner] WARNING: No node keys found."
     return 1
   fi
-  
+
   echo "[runner] Checking node key balances..."
   local insufficient_count=0
   local faucet_attempts=0
-  
+
   for i in "${!KEYS[@]}"; do
     local key="${KEYS[$i]}"
     if ! check_balance "$key" "Node key $((i+1))"; then
@@ -281,13 +281,13 @@ validate_node_balances() {
       ((faucet_attempts++))
     fi
   done
-  
+
   if [ $insufficient_count -gt 0 ]; then
     echo
     if [ $faucet_attempts -gt 0 ]; then
       echo "[runner] $faucet_attempts node key(s) attempted faucet calls"
       echo "[runner] Re-checking balances after faucet attempts..."
-      
+
       # Re-check balances after faucet attempts
       insufficient_count=0
       for i in "${!KEYS[@]}"; do
@@ -296,14 +296,14 @@ validate_node_balances() {
         local raw_token_balance=$(cast call "$TOKEN_CONTRACT" "balanceOf(address)(uint256)" "$address" --rpc-url "$HTTP_RPC" 2>/dev/null || echo "0")
         local token_balance=$(echo "$raw_token_balance" | awk '{print $1}')
         local min_tokens="10000000000"
-        
+
         if (( token_balance < min_tokens )); then
           ((insufficient_count++))
           echo "[runner] Node key $((i+1)) still has insufficient tokens: $token_balance"
         fi
       done
     fi
-    
+
     if [ $insufficient_count -gt 0 ]; then
       echo "[runner] WARNING: $insufficient_count node key(s) still have insufficient balance after faucet attempts"
       read -p "Continue anyway? (y/N): " continue_choice
@@ -315,7 +315,7 @@ validate_node_balances() {
       echo "[runner] All node keys now have sufficient balance after faucet calls"
     fi
   fi
-  
+
   return 0
 }
 
@@ -326,11 +326,11 @@ validate_sender_balances() {
     echo "Add SENDER_KEY_1, SENDER_KEY_2, etc. to your .env file"
     return 1
   fi
-  
+
   echo "[runner] Checking sender key balances..."
   local insufficient_count=0
   local faucet_attempts=0
-  
+
   for i in "${!SENDER_KEYS[@]}"; do
     local key="${SENDER_KEYS[$i]}"
     if ! check_balance "$key" "Sender key $((i+1))"; then
@@ -338,13 +338,13 @@ validate_sender_balances() {
       ((faucet_attempts++))
     fi
   done
-  
+
   if [ $insufficient_count -gt 0 ]; then
     echo
     if [ $faucet_attempts -gt 0 ]; then
       echo "[runner] $faucet_attempts sender key(s) attempted faucet calls"
       echo "[runner] Re-checking balances after faucet attempts..."
-      
+
       # Re-check balances after faucet attempts
       insufficient_count=0
       for i in "${!SENDER_KEYS[@]}"; do
@@ -353,14 +353,14 @@ validate_sender_balances() {
         local raw_token_balance=$(cast call "$TOKEN_CONTRACT" "balanceOf(address)(uint256)" "$address" --rpc-url "$HTTP_RPC" 2>/dev/null || echo "0")
         local token_balance=$(echo "$raw_token_balance" | awk '{print $1}')
         local min_tokens="10000000000"
-        
+
         if (( token_balance < min_tokens )); then
           ((insufficient_count++))
           echo "[runner] Sender key $((i+1)) still has insufficient tokens: $token_balance"
         fi
       done
     fi
-    
+
     if [ $insufficient_count -gt 0 ]; then
       echo "[runner] WARNING: $insufficient_count sender key(s) still have insufficient balance after faucet attempts"
       read -p "Continue anyway? (y/N): " continue_choice
@@ -372,7 +372,7 @@ validate_sender_balances() {
       echo "[runner] All sender keys now have sufficient balance after faucet calls"
     fi
   fi
-  
+
   return 0
 }
 
@@ -420,23 +420,23 @@ fi
 setup_escrow_contract() {
   local contract_dir="/tmp/escrow_$$"
   mkdir -p "$contract_dir"
-  
+
   echo "[runner] Setting up Escrow contract..."
-  
+
   # Download the precompiled bytecode
   echo "[runner] Downloading precompiled bytecode..."
   if ! curl -s -L "https://raw.githubusercontent.com/MiragePrivacy/escrow/master/artifacts/bytecode.hex" -o "$contract_dir/bytecode.hex"; then
     echo "[runner] ERROR: Failed to download bytecode"
     return 1
   fi
-  
+
   # Verify the bytecode file is not empty and starts with 0x
   local bytecode=$(cat "$contract_dir/bytecode.hex" 2>/dev/null)
   if [ -z "$bytecode" ] || [[ ! "$bytecode" =~ ^0x[0-9a-fA-F]+$ ]]; then
     echo "[runner] ERROR: Invalid bytecode format"
     return 1
   fi
-  
+
   # Export path for later use
   export ESCROW_CONTRACT_DIR="$contract_dir"
   echo "[runner] Escrow contract bytecode ready"
@@ -481,7 +481,7 @@ if [ -n "$EXTRA_ARGS" ]; then
 fi
 
 # Add run subcommand with CLI overrides
-NODE1_CMD="$NODE1_CMD run --eth-rpc $HTTP_RPC --rpc-port $RPC_PORT_1 --p2p-port $P2P_PORT_1"
+NODE1_CMD="$NODE1_CMD run --eth-rpc $HTTP_RPC --api-port $RPC_PORT_1 --p2p-port $P2P_PORT_1"
 
 setsid stdbuf -oL env $NODE1_CMD \
   > >(tee "$LOG1" | sed -u "s/^/\x1b[${colors[0]}mNode 1:\x1b[0m /") 2>&1 &
@@ -505,14 +505,14 @@ for ((i=2; i<=NODE_COUNT; i++)); do
   color_idx=$(((i-1) % ${#colors[@]}))
   RPC_PORT=$((RPC_START_PORT + i - 1))
   P2P_PORT=$((P2P_START_PORT + i - 1))
-  
+
   # Pick a random peer from previously started nodes (1 to i-1)
   peer_idx=$((1 + RANDOM % (i - 1)))
   PEER_ADDR="${NODE_ADDRS[$peer_idx]}"
-  
+
   # Build command with CLI args
   NODE_CMD="$BIN"
-  
+
   # This node gets keys if it's a write node (node number <= WRITE_NODES)
   if [ $i -le "$WRITE_NODES" ]; then
     key_idx1=$((2 * (i - 1)))
@@ -522,7 +522,7 @@ for ((i=2; i<=NODE_COUNT; i++)); do
   else
     echo "[runner] Node $i: RPC port $RPC_PORT, P2P port $P2P_PORT, connecting to Node $peer_idx (read node, no keys)"
   fi
-  
+
   # Add extra arguments (filtered to remove faucet commands for subsequent nodes)
   if [ -n "$EXTRA_ARGS" ]; then
     # Remove any faucet subcommands from extra args for nodes after the first
@@ -531,18 +531,18 @@ for ((i=2; i<=NODE_COUNT; i++)); do
       NODE_CMD="$NODE_CMD $FILTERED_ARGS"
     fi
   fi
-  
+
   # Add run subcommand with CLI overrides
-  NODE_CMD="$NODE_CMD run --eth-rpc $HTTP_RPC --rpc-port $RPC_PORT --p2p-port $P2P_PORT --peer $PEER_ADDR"
-  
+  NODE_CMD="$NODE_CMD run --eth-rpc $HTTP_RPC --api-port $RPC_PORT --p2p-port $P2P_PORT --peer $PEER_ADDR"
+
   # Create log file for this node to capture its address
   LOG_FILE=$(mktemp)
-  
+
   setsid stdbuf -oL env $NODE_CMD \
     > >(tee "$LOG_FILE" | sed -u "s/^/\x1b[${colors[$color_idx]}mNode $i:\x1b[0m /") 2>&1 &
   PIDS[$i]=$!
   RPC_PORTS[$i]=$RPC_PORT
-  
+
   # Wait for this node's address before launching the next node
   echo "[runner] waiting for Node $i address..."
   while true; do
@@ -565,33 +565,33 @@ deploy_escrow() {
   local token_contract=$2
   local recipient=$3
   local expected_amount=$4
-  
+
   # Validation checks
   if [ -z "$ESCROW_CONTRACT_DIR" ] || [ ! -f "$ESCROW_CONTRACT_DIR/bytecode.hex" ]; then
     echo "[runner] ERROR: Escrow contract bytecode not available" >&2
     return 1
   fi
-  
+
   # Read and validate bytecode
   local bytecode=$(cat "$ESCROW_CONTRACT_DIR/bytecode.hex" 2>/dev/null)
   if [ -z "$bytecode" ] || [[ ! "$bytecode" =~ ^0x[0-9a-fA-F]+$ ]]; then
     echo "[runner] ERROR: Invalid bytecode format" >&2
     return 1
   fi
-  
+
   # Encode constructor arguments
   local constructor_args
   constructor_args=$(env FOUNDRY_DISABLE_NIGHTLY_WARNING=1 cast abi-encode 'constructor(address,address,uint256)' "$token_contract" "$recipient" "$expected_amount" 2>/dev/null)
   local encode_status=$?
-  
+
   if [ $encode_status -ne 0 ] || [ -z "$constructor_args" ]; then
     echo "[runner] ERROR: Could not encode constructor arguments" >&2
     return 1
   fi
-  
+
   # Combine bytecode with constructor args
   local full_bytecode="${bytecode}${constructor_args#0x}"
-  
+
   # Deploy the contract with timeout
   local deploy_result
   deploy_result=$(timeout 30s env FOUNDRY_DISABLE_NIGHTLY_WARNING=1 cast send \
@@ -601,30 +601,30 @@ deploy_escrow() {
     --json \
     "$full_bytecode" 2>/dev/null)
   local deploy_status=$?
-  
+
   if [ $deploy_status -eq 124 ]; then
     echo "[runner] ERROR: Contract deployment timed out after 30 seconds" >&2
     return 1
   fi
-  
+
   if [ $deploy_status -ne 0 ] || [ -z "$deploy_result" ]; then
     echo "[runner] ERROR: Failed to deploy Escrow contract" >&2
     return 1
   fi
-  
+
   # Try to extract contract address
   local contract_address
-  
+
   # First try parsing as JSON (cast --json output)
   contract_address=$(echo "$deploy_result" | jq -r '.contractAddress // empty' 2>/dev/null)
-  
+
   # If that fails, try parsing as plain transaction hash
   if [ -z "$contract_address" ] || [ "$contract_address" = "null" ] || [ "$contract_address" = "empty" ]; then
     local tx_hash=$(echo "$deploy_result" | grep -oE "0x[a-fA-F0-9]{64}" | head -1)
-    
+
     if [ -n "$tx_hash" ]; then
       sleep 3  # Wait for transaction to be mined
-      
+
       local receipt
       receipt=$(timeout 10s cast receipt "$tx_hash" --rpc-url "$HTTP_RPC" --json 2>/dev/null)
       if [ $? -eq 0 ] && [ -n "$receipt" ]; then
@@ -632,19 +632,19 @@ deploy_escrow() {
       fi
     fi
   fi
-  
+
   # Final validation
   if [ -z "$contract_address" ] || [ "$contract_address" = "null" ] || [ "$contract_address" = "empty" ]; then
     echo "[runner] ERROR: Could not extract contract address from deployment" >&2
     return 1
   fi
-  
+
   # Validate contract address format
   if [[ ! "$contract_address" =~ ^0x[a-fA-F0-9]{40}$ ]]; then
     echo "[runner] ERROR: Invalid contract address format: $contract_address" >&2
     return 1
   fi
-  
+
   # Output only the contract address (no debug messages)
   echo "$contract_address"
 }
@@ -654,34 +654,34 @@ fund_escrow() {
   local sender_key=$2
   local reward_amount=$3
   local payment_amount=$4
-  
+
   echo "[runner] Funding escrow $escrow_address with reward: $reward_amount, payment: $payment_amount"
-  
+
   # First approve the escrow to spend tokens
   local total_amount=$((reward_amount + payment_amount))
   echo "[runner] Approving escrow to spend $total_amount tokens..."
-  
+
   local approve_result=$(cast send --private-key "$sender_key" --rpc-url "$HTTP_RPC" \
     "$TOKEN_CONTRACT" "approve(address,uint256)" "$escrow_address" "$total_amount" 2>&1)
-  
+
   if [ $? -ne 0 ]; then
     echo "[runner] ERROR: Failed to approve escrow for token spending"
     echo "[runner] Approve error: $approve_result"
     return 1
   fi
-  
+
   echo "[runner] Approval successful, now funding escrow..."
-  
+
   # Fund the escrow
   local fund_result=$(cast send --private-key "$sender_key" --rpc-url "$HTTP_RPC" \
     "$escrow_address" "fund(uint256,uint256)" "$reward_amount" "$payment_amount" 2>&1)
-  
+
   if [ $? -ne 0 ]; then
     echo "[runner] ERROR: Failed to fund escrow"
     echo "[runner] Fund error: $fund_result"
     return 1
   fi
-  
+
   echo "[runner] Escrow funded successfully"
 }
 
@@ -690,23 +690,23 @@ fund_escrow() {
 # ------------------------------------------------------------
 deploy_escrow_and_send_signal() {
   local port=$1
-  
+
   # Check if we have sender keys and necessary env vars
   if [ ${#SENDER_KEYS[@]} -eq 0 ] || [ -z "$TOKEN_CONTRACT" ] || [ -z "$HTTP_RPC" ]; then
     echo "[runner] Skipping escrow deployment (missing sender keys, TOKEN_CONTRACT, or RPC)"
     return 0
   fi
-  
+
   # Select random sender key
   local sender_idx=$((RANDOM % ${#SENDER_KEYS[@]}))
   local sender_key="${SENDER_KEYS[$sender_idx]}"
-  
+
   # Generate random transfer amount between 200-2000 USDT (whole numbers only, in micro units)
   local min_usdt=200
   local max_usdt=2000
   local usdt_amount=$((min_usdt + RANDOM % (max_usdt - min_usdt + 1)))
   local transfer_amount=$((usdt_amount * 1000000))
-  
+
   # Array of different recipient addresses
   local recipients=(
     "0x742d35Cc6670C068c7a5FE1f1014A0C74b7F8E2f"
@@ -718,52 +718,49 @@ deploy_escrow_and_send_signal() {
     "0x1111111111111111111111111111111111111111"
     "0x2222222222222222222222222222222222222222"
   )
-  
+
   # Select random recipient
   local recipient_idx=$((RANDOM % ${#recipients[@]}))
   local recipient="${recipients[$recipient_idx]}"
-  
+
   # Generate random reward amount (5-25% of transfer amount)
   local reward_percentage=$((5 + RANDOM % 21))
   local reward_amount=$((transfer_amount * reward_percentage / 100))
-  
+
   echo "[runner] Creating escrow for signal to port $port (sender key $((sender_idx + 1)))"
   echo "[runner]   Transfer: $usdt_amount USDT, Reward: $((reward_amount / 1000000)) USDT, Recipient: $recipient"
-  
+
   # Deploy escrow contract
   local escrow_address
   set +e  # Temporarily disable exit on error
   escrow_address=$(deploy_escrow "$sender_key" "$TOKEN_CONTRACT" "$recipient" "$transfer_amount" 2>/dev/null)
   local deploy_status=$?
   set -e  # Re-enable exit on error
-  
+
   if [ $deploy_status -ne 0 ] || [ -z "$escrow_address" ]; then
     echo "[runner] ERROR: Failed to deploy escrow, skipping signal"
     return 1
   fi
-  
+
   echo "[runner] Deployed escrow at: $escrow_address"
-  
+
   # Fund the escrow
   if ! fund_escrow "$escrow_address" "$sender_key" "$reward_amount" "$transfer_amount"; then
     echo "[runner] ERROR: Failed to fund escrow, skipping signal"
     return 1
   fi
-  
+
   # Send the signal with real escrow address
   local data="{\"escrow_contract\":\"$escrow_address\",\"token_contract\":\"$TOKEN_CONTRACT\",\"recipient\":\"$recipient\",\"transfer_amount\":\"$transfer_amount\",\"reward_amount\":\"$reward_amount\",\"acknowledgement_url\":\"$ACK_URL\"}"
-  
+
   echo "[runner] Sending signal to port $port with escrow $escrow_address"
-  
-  # Construct the JSON-RPC payload
-  local rpc_payload="{\"jsonrpc\":\"2.0\",\"method\":\"mirage_signal\",\"params\":[$data],\"id\":1}"
-  
+
   local curl_result
-  curl_result=$(curl -s -X POST "http://127.0.0.1:$port" \
+  curl_result=$(curl -s -X POST "http://127.0.0.1:$port/signal" \
     -H "Content-Type: application/json" \
-    -d "$rpc_payload" 2>&1)
+    -d "$data" 2>&1)
   local curl_status=$?
-  
+
   if [ $curl_status -eq 0 ]; then
     echo "[runner] Signal sent successfully"
   else
@@ -795,7 +792,7 @@ echo "[runner] Press Ctrl+C to stop all nodes"
 cleanup() {
   echo
   echo "[runner] stopping nodes..."
-  
+
   # Kill all child processes and their descendants
   for pid in "${PIDS[@]}"; do
     if kill -0 "$pid" 2>/dev/null; then
@@ -808,18 +805,18 @@ cleanup() {
       kill -9 -- -"$pid" 2>/dev/null || true
     fi
   done
-  
+
   # Also kill any remaining nomad processes that might have been missed
-  pkill -f "nomad.*--rpc-port" 2>/dev/null || true
-  
+  pkill -f "nomad.*--api-port" 2>/dev/null || true
+
   # Clean up log file
   rm -f "$LOG1" 2>/dev/null || true
-  
+
   # Clean up contract directory
   if [ -n "$ESCROW_CONTRACT_DIR" ] && [ -d "$ESCROW_CONTRACT_DIR" ]; then
     rm -rf "$ESCROW_CONTRACT_DIR" 2>/dev/null || true
   fi
-  
+
   echo "[runner] cleanup complete"
   exit 0
 }
