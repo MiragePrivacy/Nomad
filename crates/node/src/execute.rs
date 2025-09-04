@@ -4,6 +4,7 @@ use chrono::Utc;
 use eyre::{bail, eyre, Context as _, Result};
 use opentelemetry::Context;
 use otel_instrument::instrument;
+use reqwest::Url;
 use sha3::Digest;
 use tracing::{info, warn};
 use zeroize::Zeroizing;
@@ -59,7 +60,7 @@ pub async fn handle_signal(
 
     // Send receipt to client
     acknowledgement(
-        &signal.acknowledgement_url,
+        signal.acknowledgement_url,
         ReceiptFormat {
             start_time,
             end_time: Utc::now().to_rfc3339(),
@@ -145,7 +146,7 @@ async fn solve_and_decrypt_signal(vm_socket: &VmSocket, signal: SignalPayload) -
 
 /// Send acknowledgement receipt to the signal producer
 #[instrument(skip(receipt))]
-async fn acknowledgement(url: &str, receipt: ReceiptFormat) -> Result<()> {
+async fn acknowledgement(url: Url, receipt: ReceiptFormat) -> Result<()> {
     let res = reqwest::Client::new().post(url).json(&receipt).send().await;
     match res {
         Err(error) => warn!(?error, "Failed to send receipt"),

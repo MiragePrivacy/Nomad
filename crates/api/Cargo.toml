@@ -8,16 +8,11 @@ nomad-types = { path = "../types" }
 
 eyre.workspace = true
 reqwest.workspace = true
-schemars.workspace = true
 serde.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+utoipa.workspace = true
 
-aide = { version = "0.15", features = [
-    "scalar",
-    "axum",
-    "axum-json",
-    "macros",
-] }
 axum = { version = "0.8.1", features = ["macros"] }
-
+utoipa-axum = "0.2"
+utoipa-scalar = { version = "0.3", features = ["axum"] }

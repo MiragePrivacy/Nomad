@@ -15,7 +15,7 @@ use opentelemetry_sdk::{
 use opentelemetry_semantic_conventions::{resource::SERVICE_VERSION, SCHEMA_URL};
 use tracing::{info, trace};
 use tracing_subscriber::{
-    filter::Directive, layer::SubscriberExt, registry, util::SubscriberInitExt, EnvFilter, Layer,
+    layer::SubscriberExt, registry, util::SubscriberInitExt, EnvFilter, Layer,
 };
 use workspace_filter::workspace_filter;
 

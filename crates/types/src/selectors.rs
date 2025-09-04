@@ -9,11 +9,12 @@ macro_rules! impl_contract_selectors {
             $( pub const [< $title:upper _ $id:upper >]: alloy_primitives::Selector = alloy_primitives::fixed_bytes!($lit); )*
 
             /// Selector mapping struct with compile-time validation and fast lookups
-            #[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema, Clone, Debug, PartialEq, Eq)]
+            #[derive(serde::Serialize, serde::Deserialize, utoipa::ToSchema, Clone, Debug, PartialEq, Eq)]
             pub struct [< $title Mappings >] {
                 $(
+                    #[doc = stringify!($id)]
                     #[serde(rename = $lit)]
-                    #[schemars(with = "HexSelector", description = stringify!($id))]
+                    #[schema(value_type = HexSelector, example = "0x00112233", rename = $lit)]
                     pub [< $id:lower >]: alloy_primitives::Selector
                 ),*
             }

@@ -1,20 +1,14 @@
-use std::{sync::Arc, time::SystemTime};
+use std::time::SystemTime;
 
-use aide::{
-    axum::{
-        routing::{get_with, post_with},
-        ApiRouter, IntoApiResponse,
-    },
-    openapi::OpenApi,
-    scalar::Scalar,
-    transform::TransformOperation,
-};
-use axum::{extract::State, http::StatusCode, Extension, Json};
+use axum::{extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 use tokio::{net::TcpListener, sync::mpsc::UnboundedSender};
 use tracing::{debug, info};
 
 use nomad_types::SignalPayload;
+use utoipa::OpenApi;
+use utoipa_axum::{router::OpenApiRouter, routes};
+use utoipa_scalar::{Scalar, Servable};
 
 pub mod types;
 
@@ -40,7 +34,13 @@ pub struct AppState {
     pub read_only: bool,
 }
 
-async fn health(State(app_state): State<AppState>) -> impl IntoApiResponse {
+#[utoipa::path(
+    get, path = "/health",
+    responses(
+        (status = OK, body = HealthResponse)
+    )
+)]
+async fn health(State(app_state): State<AppState>) -> Json<HealthResponse> {
     let uptime_seconds = app_state.start_time.elapsed().unwrap_or_default().as_secs();
     Json(HealthResponse {
         status: "healthy".to_string(),
@@ -52,6 +52,15 @@ async fn health(State(app_state): State<AppState>) -> impl IntoApiResponse {
     })
 }
 
+#[utoipa::path(
+    post, path = "/signal",
+    request_body = SignalRequest,
+    responses(
+        (status = OK, body = str, description = "Signal acknowledged"),
+        (status = BAD_REQUEST, body = str, description = "Signal puzzle must have at least 500 bytes"),
+        (status = INTERNAL_SERVER_ERROR, body = str, description = "Failed to broadcast signal")
+    )
+)]
 async fn signal(
     State(app_state): State<AppState>,
     Json(req): Json<SignalRequest>,
@@ -117,22 +126,9 @@ async fn signal(
     }
 }
 
-fn health_docs(op: TransformOperation) -> TransformOperation {
-    op.tag("Nomad API")
-        .description("Get node health information")
-        .response::<200, Json<HealthResponse>>()
-}
-
-fn signal_docs(op: TransformOperation) -> TransformOperation {
-    op.tag("Nomad API")
-        .description("Submit a new signal to the node")
-        .response_with::<200, String, _>(|t| t.example("Signal acknowledged"))
-        .response_with::<500, String, _>(|t| t.example("Failed to broadcast signal"))
-}
-
-async fn serve_docs(Extension(api): Extension<Arc<OpenApi>>) -> impl IntoApiResponse {
-    Json(api)
-}
+#[derive(OpenApi)]
+#[openapi()]
+struct ApiDoc;
 
 pub async fn spawn_api_server(
     config: ApiConfig,
@@ -142,20 +138,12 @@ pub async fn spawn_api_server(
 ) -> eyre::Result<()> {
     debug!(?config);
 
-    aide::generate::extract_schemas(true);
-    let mut api = OpenApi::default();
-    let app = ApiRouter::new()
-        .api_route("/health", get_with(health, health_docs))
-        .api_route("/signal", post_with(signal, signal_docs))
-        .route(
-            "/scalar",
-            Scalar::new("/openapi.json")
-                .with_title("Nomad Playground")
-                .axum_route(),
-        )
-        .finish_api_with(&mut api, |api| api)
-        .route("/openapi.json", axum::routing::get(serve_docs))
-        .layer(Extension(Arc::new(api)))
+    let (router, api) = OpenApiRouter::with_openapi(ApiDoc::openapi())
+        .routes(routes!(health, signal))
+        .split_for_parts();
+
+    let app = router
+        .merge(Scalar::with_url("/scalar", api))
         .with_state(AppState {
             is_bootstrap,
             read_only,

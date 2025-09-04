@@ -100,7 +100,7 @@ async fn bootstrap_and_propagate_signal() -> eyre::Result<()> {
             recipient: [i; 20].into(),
             transfer_amount: U256::from(12345678),
             reward_amount: U256::from(1234),
-            acknowledgement_url: String::new(),
+            acknowledgement_url: "https://my-url.com".parse().unwrap(),
             selector_mapping: Default::default(),
         });
 

@@ -85,40 +85,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "aide"
-version = "0.15.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6966317188cdfe54c58c0900a195d021294afb3ece9b7073d09e4018dbb1e3a2"
-dependencies = [
- "aide-macros",
- "axum",
- "bytes",
- "cfg-if",
- "http",
- "indexmap 2.11.0",
- "schemars 0.9.0",
- "serde",
- "serde_json",
- "serde_qs",
- "thiserror 2.0.16",
- "tower-layer",
- "tower-service",
- "tracing",
-]
-
-[[package]]
-name = "aide-macros"
-version = "0.15.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f2a08f14808f3c46f3e3004b727bace64af44c3c5996d0480a14d3852b1b25a"
-dependencies = [
- "darling 0.20.11",
- "proc-macro2",
- "quote",
- "syn 2.0.106",
-]
-
-[[package]]
 name = "allocator-api2"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3838,15 +3804,16 @@ dependencies = [
 name = "nomad-api"
 version = "0.1.0"
 dependencies = [
- "aide",
  "axum",
  "eyre",
  "nomad-types",
  "reqwest",
- "schemars 0.9.0",
  "serde",
  "tokio",
  "tracing",
+ "utoipa",
+ "utoipa-axum",
+ "utoipa-scalar",
 ]
 
 [[package]]
@@ -3955,11 +3922,11 @@ dependencies = [
  "alloy-primitives",
  "eyre",
  "paste",
- "schemars 0.9.0",
  "serde",
  "serde_json",
  "tracing",
  "url",
+ "utoipa",
 ]
 
 [[package]]
@@ -4609,7 +4576,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools 0.10.5",
  "proc-macro2",
  "quote",
  "syn 2.0.106",
@@ -5168,12 +5135,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4cd191f9397d57d581cddd31014772520aa448f65ef991055d7f61582c65165f"
 dependencies = [
  "dyn-clone",
- "indexmap 2.11.0",
  "ref-cast",
- "schemars_derive",
  "serde",
  "serde_json",
- "url",
 ]
 
 [[package]]
@@ -5186,18 +5150,6 @@ dependencies = [
  "ref-cast",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "schemars_derive"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5016d94c77c6d32f0b8e08b781f7dc8a90c2007d4e77472cc2807bc10a8438fe"
-dependencies = [
- "proc-macro2",
- "quote",
- "serde_derive_internals",
- "syn 2.0.106",
 ]
 
 [[package]]
@@ -5346,17 +5298,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "serde_derive_internals"
-version = "0.29.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "18d26a20a969b9e3fdf2fc2d9f21eda6c40e2de84c9408bb5d3b05d499aae711"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.106",
-]
-
-[[package]]
 name = "serde_json"
 version = "1.0.143"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5376,19 +5317,6 @@ checksum = "59fab13f937fa393d08645bf3a84bdfe86e296747b506ada67bb15f10f218b2a"
 dependencies = [
  "itoa",
  "serde",
-]
-
-[[package]]
-name = "serde_qs"
-version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8b417bedc008acbdf6d6b4bc482d29859924114bbe2650b7921fb68a261d0aa6"
-dependencies = [
- "axum",
- "futures",
- "percent-encoding",
- "serde",
- "thiserror 2.0.16",
 ]
 
 [[package]]
@@ -6280,6 +6208,55 @@ name = "utf8parse"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
+
+[[package]]
+name = "utoipa"
+version = "5.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2fcc29c80c21c31608227e0912b2d7fddba57ad76b606890627ba8ee7964e993"
+dependencies = [
+ "indexmap 2.11.0",
+ "serde",
+ "serde_json",
+ "utoipa-gen",
+]
+
+[[package]]
+name = "utoipa-axum"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7c25bae5bccc842449ec0c5ddc5cbb6a3a1eaeac4503895dc105a1138f8234a0"
+dependencies = [
+ "axum",
+ "paste",
+ "tower-layer",
+ "tower-service",
+ "utoipa",
+]
+
+[[package]]
+name = "utoipa-gen"
+version = "5.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6d79d08d92ab8af4c5e8a6da20c47ae3f61a0f1dabc1997cdf2d082b757ca08b"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.106",
+ "url",
+]
+
+[[package]]
+name = "utoipa-scalar"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "59559e1509172f6b26c1cdbc7247c4ddd1ac6560fe94b584f81ee489b141f719"
+dependencies = [
+ "axum",
+ "serde",
+ "serde_json",
+ "utoipa",
+]
 
 [[package]]
 name = "uuid"
