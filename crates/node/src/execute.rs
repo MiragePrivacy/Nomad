@@ -16,7 +16,7 @@ use nomad_vm::VmSocket;
 use crate::_OTEL_TRACER_NAME;
 
 /// Process signals sampled from the pool
-#[instrument(skip_all, fields(token = signal.token_contract()), err)]
+#[instrument(skip_all, fields(token = signal.token_contract()), err = e.as_ref())]
 pub async fn execute_signal(
     signal: SignalPayload,
     eth_client: &EthClient,

@@ -1,7 +1,8 @@
 use affair::{DedicatedThread, Executor, Socket, Worker};
+use opentelemetry::global::tracer;
+use opentelemetry::trace::mark_span_as_active;
+use opentelemetry::trace::Tracer;
 use opentelemetry::Context;
-use otel_instrument::instrument;
-use otel_instrument::tracer_name;
 use thiserror::Error;
 use tracing::trace;
 
@@ -12,8 +13,6 @@ mod ops;
 mod program;
 #[cfg(test)]
 mod tests;
-
-tracer_name!("nomad");
 
 /// Fixed memory size available to the VM
 pub const MEMORY_SIZE: usize = 1024 * 1024 * 1024;
@@ -60,9 +59,9 @@ pub struct NomadVm {
 impl Worker for NomadVm {
     type Request = (Vec<u8>, Context);
     type Response = Result<[u8; 32], VmError>;
-
-    #[instrument(name = "vm", skip_all, err, parent = ctx)]
     fn handle(&mut self, (program, ctx): Self::Request) -> Self::Response {
+        let span = tracer("nomad").start_with_context("vm", &ctx);
+        let _entered = mark_span_as_active(span);
         trace!("Received {} byte program", program.len());
         self.execute(program)
     }

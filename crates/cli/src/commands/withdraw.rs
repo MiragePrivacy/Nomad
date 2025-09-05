@@ -5,7 +5,7 @@ use alloy::{
 use clap::Parser;
 use color_eyre::eyre::{bail, Result};
 
-use nomad_ethereum::{EthClient, IERC20};
+use nomad_ethereum::{contracts::IERC20, EthClient};
 use nomad_node::config::Config;
 
 #[derive(Parser)]
