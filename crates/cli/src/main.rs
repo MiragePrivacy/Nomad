@@ -159,10 +159,10 @@ impl Cli {
                     .with_http()
                     .with_headers(config.otlp.headers.clone())
                     .with_endpoint(url.join("v1/logs").unwrap().as_str())
-                    .with_http_client(reqwest::Client::new())
                     .build()?;
                 let provider = SdkLoggerProvider::builder()
-                    .with_simple_exporter(exporter)
+                    // .with_simple_exporter(exporter)
+                    .with_batch_exporter(exporter)
                     .with_resource(resource.clone())
                     .build();
                 logger = Some(
@@ -179,10 +179,10 @@ impl Cli {
                     .with_http()
                     .with_headers(config.otlp.headers.clone())
                     .with_endpoint(url.join("v1/traces").unwrap().as_str())
-                    .with_http_client(reqwest::Client::new())
                     .build()?;
                 let provider = SdkTracerProvider::builder()
-                    .with_simple_exporter(exporter)
+                    // .with_simple_exporter(exporter)
+                    .with_batch_exporter(exporter)
                     .with_sampler(Sampler::AlwaysOn)
                     .with_resource(resource.clone())
                     .build();
