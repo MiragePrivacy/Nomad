@@ -1,7 +1,6 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::path::PathBuf;
 
 use eyre::{bail, Result};
-use reqwest::Url;
 use resolve_path::PathResolveExt;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
@@ -35,26 +34,14 @@ impl Default for VmConfig {
     }
 }
 
+/// Opentelemetry config, default with everything turned off
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
+#[derive(Default)]
 pub struct OtlpConfig {
-    pub url: Option<Url>,
-    pub headers: HashMap<String, String>,
     pub logs: bool,
     pub traces: bool,
     pub metrics: bool,
-}
-
-impl Default for OtlpConfig {
-    fn default() -> Self {
-        Self {
-            url: None,
-            headers: HashMap::new(),
-            logs: true,
-            traces: true,
-            metrics: true,
-        }
-    }
 }
 
 impl Config {

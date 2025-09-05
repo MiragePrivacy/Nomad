@@ -5,7 +5,7 @@ use clap::{ArgAction, Parser};
 use color_eyre::eyre::{bail, Context, Result};
 use opentelemetry::KeyValue;
 use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
-use opentelemetry_otlp::{SpanExporter, WithExportConfig, WithHttpConfig};
+use opentelemetry_otlp::{LogExporter, SpanExporter};
 use opentelemetry_sdk::{
     logs::SdkLoggerProvider,
     trace::{Sampler, SdkTracerProvider},
@@ -58,12 +58,15 @@ impl Cli {
     /// Run the app
     async fn execute(self) -> Result<()> {
         let config = Config::load(&self.config)?;
-        let tracer = self.setup_logging(&config).await?;
+        let (tracer, logger) = self.setup_logging(&config).await?;
 
         let signers = self.build_signers()?;
         self.cmd.execute(config, signers).await?;
 
         if let Some(provider) = tracer {
+            provider.shutdown()?;
+        }
+        if let Some(provider) = logger {
             provider.shutdown()?;
         }
 
@@ -103,7 +106,10 @@ impl Cli {
     }
 
     // Setup logging filters and subscriber
-    pub async fn setup_logging(&self, config: &Config) -> Result<Option<SdkTracerProvider>> {
+    pub async fn setup_logging(
+        &self,
+        config: &Config,
+    ) -> Result<(Option<SdkTracerProvider>, Option<SdkLoggerProvider>)> {
         // Setup console logging
         let filter = std::env::var("RUST_LOG").unwrap_or_else(|_| {
             // Default which is directed by the verbosity flag
@@ -128,10 +134,12 @@ impl Cli {
         // fetch ip address if we're running the node or telemetry is enabled
         let ip = self.global_ip().await?;
 
+        let mut log_layer = None;
         let mut logger = None;
         let mut tracer = None;
 
-        if let Some(url) = &config.otlp.url {
+        // setup telemetry if enabled
+        if config.otlp.logs || config.otlp.metrics || config.otlp.traces {
             // Create a Resource that captures information about the entity for which telemetry is recorded.
             let mut resource = Resource::builder()
                 .with_service_name(env!("CARGO_BIN_NAME"))
@@ -155,33 +163,24 @@ impl Cli {
             let resource = resource.build();
 
             if config.otlp.logs {
-                let exporter = opentelemetry_otlp::LogExporter::builder()
-                    .with_http()
-                    .with_headers(config.otlp.headers.clone())
-                    .with_endpoint(url.join("v1/logs").unwrap().as_str())
-                    .build()?;
+                let exporter = LogExporter::builder().with_http().build()?;
                 let provider = SdkLoggerProvider::builder()
-                    // .with_simple_exporter(exporter)
                     .with_batch_exporter(exporter)
                     .with_resource(resource.clone())
                     .build();
-                logger = Some(
+                log_layer = Some(
                     OpenTelemetryTracingBridge::new(&provider).with_filter(
                         EnvFilter::builder()
                             .parse_lossy(workspace_filter!("trace", "info,nomad={level}")),
                     ),
                 );
+                logger = Some(provider);
             }
 
             if config.otlp.traces {
                 // Setup opentelemetry tracing
-                let exporter = SpanExporter::builder()
-                    .with_http()
-                    .with_headers(config.otlp.headers.clone())
-                    .with_endpoint(url.join("v1/traces").unwrap().as_str())
-                    .build()?;
+                let exporter = SpanExporter::builder().with_http().build()?;
                 let provider = SdkTracerProvider::builder()
-                    // .with_simple_exporter(exporter)
                     .with_batch_exporter(exporter)
                     .with_sampler(Sampler::AlwaysOn)
                     .with_resource(resource.clone())
@@ -191,12 +190,12 @@ impl Cli {
             }
         }
 
-        registry().with(console).with(logger).init();
+        registry().with(console).with(log_layer).init();
         trace!(env_filter);
         if let Some(ip) = ip {
             info!("Remote Address: {ip}");
         }
-        Ok(tracer)
+        Ok((tracer, logger))
     }
 }
 
