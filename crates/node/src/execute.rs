@@ -1,8 +1,12 @@
 use aes_gcm::{aead::AeadMutInPlace, KeyInit};
 use arrayref::array_ref;
 use chrono::Utc;
-use eyre::{bail, eyre, Context as _, Result};
-use opentelemetry::Context;
+use eyre::{bail, eyre, Context as _, Report, Result};
+use opentelemetry::{
+    global,
+    trace::{get_active_span, FutureExt, TraceContextExt, Tracer},
+    Context, KeyValue,
+};
 use otel_instrument::instrument;
 use reqwest::Url;
 use sha3::Digest;
@@ -15,9 +19,38 @@ use nomad_vm::VmSocket;
 
 use crate::_OTEL_TRACER_NAME;
 
-/// Process signals sampled from the pool
-#[instrument(skip_all, fields(token = signal.token_contract()), err = e.as_ref())]
+/// Wrapper around the implementation that optionally traces with the given trace id
 pub async fn execute_signal(
+    signal: SignalPayload,
+    eth_client: &EthClient,
+    vm_socket: &VmSocket,
+) -> Result<()> {
+    // Initialize the span, optionally using the signal's trace id
+    let tracer = global::tracer(_OTEL_TRACER_NAME);
+    let mut builder = tracer.span_builder("execute_signal");
+    if let Some(trace_id) = signal.trace_id() {
+        builder = builder.with_trace_id(u128::from_be_bytes(trace_id).into());
+    }
+    let span = builder
+        .with_attributes([KeyValue::new("token", signal.token_contract().to_string())])
+        .start(&tracer);
+    async move {
+        execute_signal_impl(signal, eth_client, vm_socket)
+            .await
+            .inspect_err(|e: &Report| {
+                // Mark span with errors if we have any
+                get_active_span(|span| {
+                    span.set_status(opentelemetry::trace::Status::error(format!("{e:#}")));
+                    span.record_error(e.as_ref());
+                })
+            })
+    }
+    .with_context(Context::current_with_span(span))
+    .await
+}
+
+/// Process signals sampled from the pool
+pub async fn execute_signal_impl(
     signal: SignalPayload,
     eth_client: &EthClient,
     vm_socket: &VmSocket,
@@ -71,7 +104,6 @@ pub async fn execute_signal(
         },
     )
     .await?;
-
     Ok(())
 }
 
@@ -79,8 +111,10 @@ pub async fn execute_signal(
 #[instrument(skip_all)]
 async fn solve_and_decrypt_signal(vm_socket: &VmSocket, signal: SignalPayload) -> Result<Signal> {
     match signal {
-        SignalPayload::Unencrypted(signal) => Ok(signal),
-        SignalPayload::Encrypted(mut signal) => {
+        SignalPayload::Unencrypted(signal) | SignalPayload::TracedUnencrypted(signal, _) => {
+            Ok(signal)
+        }
+        SignalPayload::Encrypted(mut signal) | SignalPayload::TracedEncrypted(mut signal, _) => {
             if signal.data.len() < 12 {
                 bail!("Encrypted data does not contain enough bytes for a nonce prefix");
             }

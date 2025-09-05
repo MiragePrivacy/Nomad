@@ -11,11 +11,22 @@ pub enum SignalRequest {
     Encrypted(EncryptedSignal),
 }
 
-impl From<SignalRequest> for SignalPayload {
-    fn from(v: SignalRequest) -> Self {
-        match v {
-            SignalRequest::Encrypted(s) => Self::Encrypted(s),
-            SignalRequest::Unencrypted(s) => Self::Unencrypted(s),
+impl SignalRequest {
+    pub fn untraced(self) -> SignalPayload {
+        match self {
+            SignalRequest::Encrypted(s) => SignalPayload::Encrypted(s),
+            SignalRequest::Unencrypted(s) => SignalPayload::Unencrypted(s),
+        }
+    }
+
+    pub fn traced(self, id: Vec<u8>) -> SignalPayload {
+        match self {
+            SignalRequest::Encrypted(s) => {
+                SignalPayload::TracedEncrypted(s, id.try_into().unwrap())
+            }
+            SignalRequest::Unencrypted(s) => {
+                SignalPayload::TracedUnencrypted(s, id.try_into().unwrap())
+            }
         }
     }
 }

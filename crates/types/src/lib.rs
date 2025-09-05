@@ -16,13 +16,25 @@ use utoipa::ToSchema;
 pub enum SignalPayload {
     Unencrypted(Signal),
     Encrypted(EncryptedSignal),
+    TracedUnencrypted(Signal, [u8; 16]),
+    TracedEncrypted(EncryptedSignal, [u8; 16]),
 }
 
 impl SignalPayload {
     pub fn token_contract(&self) -> Address {
         match self {
             SignalPayload::Encrypted(EncryptedSignal { token_contract, .. })
-            | SignalPayload::Unencrypted(Signal { token_contract, .. }) => *token_contract,
+            | SignalPayload::Unencrypted(Signal { token_contract, .. })
+            | SignalPayload::TracedEncrypted(EncryptedSignal { token_contract, .. }, _)
+            | SignalPayload::TracedUnencrypted(Signal { token_contract, .. }, _) => *token_contract,
+        }
+    }
+
+    pub fn trace_id(&self) -> Option<[u8; 16]> {
+        match self {
+            SignalPayload::TracedEncrypted(_, trace)
+            | SignalPayload::TracedUnencrypted(_, trace) => Some(*trace),
+            _ => None,
         }
     }
 }

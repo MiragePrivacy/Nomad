@@ -1,11 +1,15 @@
 use std::time::SystemTime;
 
-use axum::{extract::State, http::StatusCode, Json};
+use axum::{
+    extract::State,
+    http::{HeaderMap, StatusCode},
+    Json,
+};
 use serde::{Deserialize, Serialize};
 use tokio::{net::TcpListener, sync::mpsc::UnboundedSender};
 use tracing::{debug, info};
 
-use nomad_types::SignalPayload;
+use nomad_types::{primitives::hex, SignalPayload};
 use utoipa::OpenApi;
 use utoipa_axum::{router::OpenApiRouter, routes};
 use utoipa_scalar::{Scalar, Servable};
@@ -63,6 +67,7 @@ async fn health(State(app_state): State<AppState>) -> Json<HealthResponse> {
 )]
 async fn signal(
     State(app_state): State<AppState>,
+    headers: HeaderMap,
     Json(req): Json<SignalRequest>,
 ) -> (StatusCode, String) {
     // Validate signal
@@ -115,8 +120,22 @@ async fn signal(
         }
     }
 
-    info!("Received signal");
-    if app_state.signal_tx.send(req.into()).is_err() {
+    let signal = (|| {
+        if let Some(id) = headers.get("trace_id") {
+            if let Ok(id) = id.to_str().map(|s| s.trim_start_matches("0x")) {
+                if let Ok(bytes) = hex::decode(id) {
+                    if bytes.len() == 16 {
+                        info!("Received signal with trace id: {id}");
+                        return req.traced(bytes);
+                    }
+                }
+            }
+        }
+        info!("Received signal");
+        req.untraced()
+    })();
+
+    if app_state.signal_tx.send(signal).is_err() {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             "Failed to broadcast signal".to_string(),
