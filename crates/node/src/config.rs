@@ -18,6 +18,7 @@ pub struct Config {
     pub vm: VmConfig,
     pub eth: EthConfig,
     pub otlp: OtlpConfig,
+    pub private_keys: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

@@ -60,7 +60,7 @@ impl Cli {
         let config = Config::load(&self.config)?;
         let (tracer, logger) = self.setup_logging(&config).await?;
 
-        let signers = self.build_signers()?;
+        let signers = self.build_signers(&config)?;
         self.cmd.execute(config, signers).await?;
 
         if let Some(provider) = tracer {
@@ -73,16 +73,24 @@ impl Cli {
         Ok(())
     }
 
-    /// Build list of signers from the cli arguments
-    fn build_signers(&self) -> Result<Vec<PrivateKeySigner>> {
-        let Some(accounts) = &self.pk else {
-            return Ok(vec![]);
+    /// Build list of signers from the cli arguments and config
+    fn build_signers(&self, config: &Config) -> Result<Vec<PrivateKeySigner>> {
+        let keys = if let Some(cli_keys) = &self.pk {
+            // If CLI keys are provided, use only those
+            cli_keys.clone()
+        } else {
+            // Otherwise, use config keys
+            config.private_keys.clone()
         };
-        if accounts.len() < 2 {
+
+        if keys.is_empty() {
+            return Ok(vec![]);
+        }
+        if keys.len() < 2 {
             bail!("At least 2 ethereum keys are required");
         }
-        accounts
-            .iter()
+
+        keys.iter()
             .map(|s| {
                 s.parse::<PrivateKeySigner>()
                     .inspect(|v| {
