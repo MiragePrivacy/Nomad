@@ -124,7 +124,6 @@ pub struct ReceiptFormat {
     pub bond_transaction_hash: String,
     pub approval_transaction_hash: String,
     pub transfer_transaction_hash: String,
-    pub collection_transaction_hash: String,
 }
 
 mod hex_schema {

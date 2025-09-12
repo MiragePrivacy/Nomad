@@ -10,7 +10,7 @@ use opentelemetry::{
 use otel_instrument::instrument;
 use reqwest::Url;
 use sha3::Digest;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 use zeroize::Zeroizing;
 
 use nomad_ethereum::EthClient;
@@ -80,30 +80,34 @@ pub async fn execute_signal_impl(
     info!("Generating transfer proof");
     let proof = eth_client.generate_proof(Some(&signal), &transfer).await?;
 
-    info!("Collecting rewards from escrow");
-    let collect = eth_client
-        .collect(
-            &provider,
-            eoa_1,
-            signal.clone(),
-            proof,
-            transfer.block_number.unwrap(),
-        )
-        .await?;
-
     // Send receipt to client
     acknowledgement(
-        signal.acknowledgement_url,
+        signal.acknowledgement_url.clone(),
         ReceiptFormat {
             start_time,
             end_time: Utc::now().to_rfc3339(),
             approval_transaction_hash: approve.transaction_hash.to_string(),
             bond_transaction_hash: bond.transaction_hash.to_string(),
             transfer_transaction_hash: transfer.transaction_hash.to_string(),
-            collection_transaction_hash: collect.transaction_hash.to_string(),
         },
     )
     .await?;
+
+    info!("Collecting rewards from escrow");
+    eth_client
+        .collect(
+            &provider,
+            eoa_1,
+            signal,
+            proof,
+            transfer.block_number.unwrap(),
+        )
+        .await
+        .inspect_err(|_| {
+            error!("Executed transfer but failed to collect rewards and transfer funds")
+        })?;
+
+    info!("Successfully executed signal");
     Ok(())
 }
 
