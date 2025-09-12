@@ -316,7 +316,10 @@ impl EthClient {
             .unwrap();
 
         // Get the last used EOA 2 account for this token, if any
-        let last_used_eoa_2 = self.last_used_eoa_2.read(&signal.token_contract, |_, &v| v);
+        let last_used_eoa_2 = self
+            .last_used_eoa_2
+            .read_async(&signal.token_contract, |_, &v| v)
+            .await;
 
         // find eoa 1; needs enough for bond amount.
         // should have the least amount of funds for redistribution
@@ -333,18 +336,20 @@ impl EthClient {
         let eoa_2 = *balances
             .iter()
             .find(|(i, bal)| {
-                i != &eoa_1.0 
-                && bal >= &signal.transfer_amount 
-                && Some(*i) != last_used_eoa_2
+                i != &eoa_1.0 && bal >= &signal.transfer_amount && Some(*i) != last_used_eoa_2
             })
             .or_else(|| {
                 // If we can't find an account that wasn't last used as EOA 2, fall back to any valid account
-                balances.iter().find(|(i, bal)| i != &eoa_1.0 && bal >= &signal.transfer_amount)
+                balances
+                    .iter()
+                    .find(|(i, bal)| i != &eoa_1.0 && bal >= &signal.transfer_amount)
             })
             .ok_or(ClientError::NotEnoughTokens)?;
 
         // Track this EOA 2 account as the last used for this token
-        self.last_used_eoa_2.insert(signal.token_contract, eoa_2.0);
+        self.last_used_eoa_2
+            .upsert_async(signal.token_contract, eoa_2.0)
+            .await;
 
         Ok([eoa_1.0, eoa_2.0])
     }

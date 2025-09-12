@@ -40,7 +40,7 @@ impl SignalPool {
         // Hash signal and insert into cache
         let hasher = &mut std::hash::DefaultHasher::new();
         signal.hash(hasher);
-        if self.cache.put(hasher.finish(), ()).is_err() {
+        if self.cache.put_async(hasher.finish(), ()).await.is_err() {
             return false;
         }
 
