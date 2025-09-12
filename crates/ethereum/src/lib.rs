@@ -16,6 +16,7 @@ use alloy::{
 };
 use opentelemetry::KeyValue;
 use otel_instrument::{instrument, tracer_name};
+use scc::HashMap;
 use tracing::{debug, info, warn};
 
 use nomad_types::{ObfuscatedCaller, Signal};
@@ -47,6 +48,8 @@ pub struct EthClient {
     min_eth: (U256, f64),
     config: EthConfig,
     uniswap: Option<UniswapRuntime>,
+    // Track the last used EOA 2 account index per token contract address
+    last_used_eoa_2: HashMap<Address, usize>,
 }
 
 #[derive(Clone)]
@@ -136,6 +139,7 @@ impl EthClient {
             min_eth,
             config,
             uniswap,
+            last_used_eoa_2: HashMap::new(),
         })
     }
 
@@ -311,6 +315,9 @@ impl EthClient {
             .checked_div(U256::from(100))
             .unwrap();
 
+        // Get the last used EOA 2 account for this token, if any
+        let last_used_eoa_2 = self.last_used_eoa_2.read(&signal.token_contract, |_, &v| v);
+
         // find eoa 1; needs enough for bond amount.
         // should have the least amount of funds for redistribution
         balances.sort();
@@ -321,11 +328,23 @@ impl EthClient {
 
         // find eoa 2; needs enough for escrow.
         // should have the most amount of funds for redistribution
+        // but avoid reusing the last used EOA 2 account
         balances.reverse();
         let eoa_2 = *balances
             .iter()
-            .find(|(i, bal)| i != &eoa_1.0 && bal >= &signal.transfer_amount)
+            .find(|(i, bal)| {
+                i != &eoa_1.0 
+                && bal >= &signal.transfer_amount 
+                && Some(*i) != last_used_eoa_2
+            })
+            .or_else(|| {
+                // If we can't find an account that wasn't last used as EOA 2, fall back to any valid account
+                balances.iter().find(|(i, bal)| i != &eoa_1.0 && bal >= &signal.transfer_amount)
+            })
             .ok_or(ClientError::NotEnoughTokens)?;
+
+        // Track this EOA 2 account as the last used for this token
+        self.last_used_eoa_2.insert(signal.token_contract, eoa_2.0);
 
         Ok([eoa_1.0, eoa_2.0])
     }
