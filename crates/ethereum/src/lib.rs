@@ -561,30 +561,37 @@ impl EthClient {
     }
 
     /// Report current balances to OpenTelemetry metrics (if enabled)
-    #[instrument(skip_all)]
     pub async fn report_balance_metrics(&self) -> Result<(), ClientError> {
+        let accounts = (0..self.accounts.len()).collect::<Vec<_>>();
+        self.update_account_balance_metrics(&accounts).await
+    }
+
+    /// Update balance metrics for specific accounts after transactions
+    pub async fn update_account_balance_metrics(
+        &self,
+        accounts: &[usize],
+    ) -> Result<(), ClientError> {
         let Some(ref metrics) = self.balance_metrics else {
             return Ok(());
         };
 
-        // Report ETH balance per account
-        for address in &self.accounts {
-            let balance = self.read_provider.get_balance(*address).await?;
-            let balance_eth: f64 = format_ether(balance).parse().unwrap_or(0.0);
+        for &account_index in accounts {
+            let address = self.accounts[account_index];
+
+            // Update ETH balance for this account
+            let eth_balance = self.read_provider.get_balance(address).await?;
+            let balance_eth: f64 = format_ether(eth_balance).parse().unwrap_or(0.0);
 
             metrics.eth_balance.record(
                 balance_eth,
                 &[KeyValue::new("account", address.to_string())],
             );
-        }
 
-        // Report token balances per account and per token
-        for (token_name, token_config) in &self.config.token {
-            let token_contract = IERC20::new(token_config.address, &self.read_provider);
-            let decimals = token_contract.decimals().call().await.unwrap_or(18);
-
-            for address in &self.accounts {
-                let balance = token_contract.balanceOf(*address).call().await?;
+            // Update token balances for this account
+            for (token_name, token_config) in &self.config.token {
+                let token_contract = IERC20::new(token_config.address, &self.read_provider);
+                let balance = token_contract.balanceOf(address).call().await?;
+                let decimals = token_contract.decimals().call().await.unwrap_or(18);
                 let balance_f64: f64 = format_units(balance, decimals)
                     .unwrap_or_default()
                     .parse()

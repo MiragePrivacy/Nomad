@@ -101,6 +101,7 @@ impl NomadNode {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(60)); // Report every minute
             loop {
                 interval.tick().await;
+                // Update all accounts periodically
                 if let Err(e) = eth_client_for_metrics.report_balance_metrics().await {
                     warn!("Failed to report balance metrics: {}", e);
                 }

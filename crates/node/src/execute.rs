@@ -107,6 +107,11 @@ pub async fn execute_signal_impl(
             error!("Executed transfer but failed to collect rewards and transfer funds")
         })?;
 
+    // Update balance metrics for both accounts used in the transaction
+    if let Err(e) = eth_client.update_account_balance_metrics(&[eoa_1, eoa_2]).await {
+        warn!("Failed to update balance metrics after signal execution: {}", e);
+    }
+
     info!("Successfully executed signal");
     Ok(())
 }
