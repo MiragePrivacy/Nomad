@@ -77,9 +77,6 @@ pub async fn execute_signal_impl(
         .transfer(&provider, eoa_2, signal.clone())
         .await?;
 
-    info!("Generating transfer proof");
-    let proof = eth_client.generate_proof(Some(&signal), &transfer).await?;
-
     // Send receipt to client
     acknowledgement(
         signal.acknowledgement_url.clone(),
@@ -92,6 +89,9 @@ pub async fn execute_signal_impl(
         },
     )
     .await?;
+
+    info!("Generating transfer proof");
+    let proof = eth_client.generate_proof(Some(&signal), &transfer).await?;
 
     info!("Collecting rewards from escrow");
     eth_client
@@ -108,8 +108,14 @@ pub async fn execute_signal_impl(
         })?;
 
     // Update balance metrics for both accounts used in the transaction
-    if let Err(e) = eth_client.update_account_balance_metrics(&[eoa_1, eoa_2]).await {
-        warn!("Failed to update balance metrics after signal execution: {}", e);
+    if let Err(e) = eth_client
+        .update_account_balance_metrics(&[eoa_1, eoa_2])
+        .await
+    {
+        warn!(
+            "Failed to update balance metrics after signal execution: {}",
+            e
+        );
     }
 
     info!("Successfully executed signal");
