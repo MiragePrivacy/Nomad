@@ -164,6 +164,11 @@ impl P2pNode {
                         }
                     }
 
+                    // Peer disconnected
+                    SwarmEvent::ConnectionClosed { peer_id, num_established, cause, .. } => {
+                        debug!(?peer_id, "Connection closed ({num_established} remaining): {cause:?}");
+                    }
+
                     // Process incoming gossip signals, but only if we are not in read-only mode
                     SwarmEvent::Behaviour(MirageBehaviorEvent::Gossipsub(
                         gossipsub::Event::Message {
