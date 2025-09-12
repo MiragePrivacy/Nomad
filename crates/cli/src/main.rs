@@ -5,9 +5,10 @@ use clap::{ArgAction, Parser};
 use color_eyre::eyre::{bail, Context, Result};
 use opentelemetry::KeyValue;
 use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
-use opentelemetry_otlp::{LogExporter, SpanExporter};
+use opentelemetry_otlp::{LogExporter, MetricExporter, SpanExporter};
 use opentelemetry_sdk::{
     logs::SdkLoggerProvider,
+    metrics::SdkMeterProvider,
     trace::{Sampler, SdkTracerProvider},
     Resource,
 };
@@ -58,7 +59,7 @@ impl Cli {
     /// Run the app
     async fn execute(self) -> Result<()> {
         let config = Config::load(&self.config)?;
-        let (tracer, logger) = self.setup_logging(&config).await?;
+        let (tracer, logger, meter) = self.setup_logging(&config).await?;
 
         let signers = self.build_signers(&config)?;
         self.cmd.execute(config, signers).await?;
@@ -68,6 +69,9 @@ impl Cli {
         }
         if let Some(provider) = logger {
             provider.shutdown()?;
+        }
+        if let Some(meter) = meter {
+            meter.shutdown()?;
         }
 
         Ok(())
@@ -117,7 +121,11 @@ impl Cli {
     pub async fn setup_logging(
         &self,
         config: &Config,
-    ) -> Result<(Option<SdkTracerProvider>, Option<SdkLoggerProvider>)> {
+    ) -> Result<(
+        Option<SdkTracerProvider>,
+        Option<SdkLoggerProvider>,
+        Option<SdkMeterProvider>,
+    )> {
         // Setup console logging
         let filter = std::env::var("RUST_LOG").unwrap_or_else(|_| {
             // Default which is directed by the verbosity flag
@@ -145,6 +153,7 @@ impl Cli {
         let mut log_layer = None;
         let mut logger = None;
         let mut tracer = None;
+        let mut meter = None;
 
         // setup telemetry if enabled
         if config.otlp.logs || config.otlp.metrics || config.otlp.traces {
@@ -196,6 +205,17 @@ impl Cli {
                 opentelemetry::global::set_tracer_provider(provider.clone());
                 tracer = Some(provider);
             }
+
+            if config.otlp.metrics {
+                // Setup opentelemetry metrics
+                let exporter = MetricExporter::builder().with_http().build()?;
+                let provider = SdkMeterProvider::builder()
+                    .with_periodic_exporter(exporter)
+                    .with_resource(resource)
+                    .build();
+                opentelemetry::global::set_meter_provider(provider.clone());
+                meter = Some(provider);
+            }
         }
 
         registry().with(console).with(log_layer).init();
@@ -203,7 +223,7 @@ impl Cli {
         if let Some(ip) = ip {
             info!("Remote Address: {ip}");
         }
-        Ok((tracer, logger))
+        Ok((tracer, logger, meter))
     }
 }
 

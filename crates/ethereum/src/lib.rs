@@ -3,7 +3,7 @@ use std::{fmt::Debug, time::Duration};
 use alloy::{
     network::EthereumWallet,
     primitives::{
-        utils::{format_ether, parse_ether},
+        utils::{format_ether, format_units, parse_ether},
         Address, U256,
     },
     providers::{
@@ -14,7 +14,7 @@ use alloy::{
     signers::local::PrivateKeySigner,
     transports::{RpcError, TransportErrorKind},
 };
-use opentelemetry::KeyValue;
+use opentelemetry::{global::meter_provider, metrics::Gauge, KeyValue};
 use otel_instrument::{instrument, tracer_name};
 use scc::HashMap;
 use tracing::{debug, info, warn};
@@ -50,6 +50,14 @@ pub struct EthClient {
     uniswap: Option<UniswapRuntime>,
     // Track the last used EOA 2 account index per token contract address
     last_used_eoa_2: HashMap<Address, usize>,
+    // OpenTelemetry metrics for balance monitoring (optional)
+    balance_metrics: Option<BalanceMetrics>,
+}
+
+#[derive(Clone)]
+pub struct BalanceMetrics {
+    eth_balance: Gauge<f64>,
+    token_balance: Gauge<f64>,
 }
 
 #[derive(Clone)]
@@ -140,6 +148,7 @@ impl EthClient {
             config,
             uniswap,
             last_used_eoa_2: HashMap::new(),
+            balance_metrics: None,
         })
     }
 
@@ -529,5 +538,69 @@ impl EthClient {
             ));
         });
         Ok(receipt)
+    }
+
+    /// Enable balance metrics for monitoring (only used when running the node)
+    pub async fn enable_balance_metrics(&mut self) {
+        let meter = meter_provider().meter("nomad");
+
+        let eth_balance = meter
+            .f64_gauge("eth_balance")
+            .with_description("ETH balance per account")
+            .build();
+
+        let token_balance = meter
+            .f64_gauge("token_balance")
+            .with_description("Token balance per account and token")
+            .build();
+
+        self.balance_metrics = Some(BalanceMetrics {
+            eth_balance,
+            token_balance,
+        });
+    }
+
+    /// Report current balances to OpenTelemetry metrics (if enabled)
+    #[instrument(skip_all)]
+    pub async fn report_balance_metrics(&self) -> Result<(), ClientError> {
+        let Some(ref metrics) = self.balance_metrics else {
+            return Ok(());
+        };
+
+        // Report ETH balance per account
+        for address in &self.accounts {
+            let balance = self.read_provider.get_balance(*address).await?;
+            let balance_eth: f64 = format_ether(balance).parse().unwrap_or(0.0);
+
+            metrics.eth_balance.record(
+                balance_eth,
+                &[KeyValue::new("account", address.to_string())],
+            );
+        }
+
+        // Report token balances per account and per token
+        for (token_name, token_config) in &self.config.token {
+            let token_contract = IERC20::new(token_config.address, &self.read_provider);
+            let decimals = token_contract.decimals().call().await.unwrap_or(18);
+
+            for address in &self.accounts {
+                let balance = token_contract.balanceOf(*address).call().await?;
+                let balance_f64: f64 = format_units(balance, decimals)
+                    .unwrap_or_default()
+                    .parse()
+                    .unwrap_or(0.0);
+
+                metrics.token_balance.record(
+                    balance_f64,
+                    &[
+                        KeyValue::new("token", token_name.clone()),
+                        KeyValue::new("token_address", token_config.address.to_string()),
+                        KeyValue::new("account", address.to_string()),
+                    ],
+                );
+            }
+        }
+
+        Ok(())
     }
 }

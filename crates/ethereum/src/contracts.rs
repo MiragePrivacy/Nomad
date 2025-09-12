@@ -7,6 +7,7 @@ alloy::sol! {
         function mint() external;
         function transfer(address to, uint256 value) external returns (bool);
         function approve(address spender, uint256 value) external returns (bool);
+        function decimals() public view returns (uint8);
     }
 
     #[sol(rpc)]

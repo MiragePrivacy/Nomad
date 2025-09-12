@@ -51,7 +51,8 @@ impl NomadNode {
         P2pNode::new(config.p2p, signal_pool.clone(), read_only, Some(signal_rx))?.spawn();
 
         // Build eth client
-        let eth_client = EthClient::new(config.eth, signers).await?;
+        let mut eth_client = EthClient::new(config.eth, signers).await?;
+        eth_client.enable_balance_metrics().await;
 
         // Spawn a vm worker thread
         let vm_socket = NomadVm::new(config.vm.max_cycles).spawn();
@@ -93,6 +94,18 @@ impl NomadNode {
                 }
             });
         }
+
+        // Spawn background task for balance metrics reporting
+        let eth_client_for_metrics = self.eth_client.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60)); // Report every minute
+            loop {
+                interval.tick().await;
+                if let Err(e) = eth_client_for_metrics.report_balance_metrics().await {
+                    warn!("Failed to report balance metrics: {}", e);
+                }
+            }
+        });
 
         loop {
             if let Err(e) = self.next().await {
