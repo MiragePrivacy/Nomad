@@ -9,7 +9,7 @@ use alloy::{
     rpc::types::TransactionReceipt,
 };
 use eyre::bail;
-use tracing::{debug, info, trace, warn};
+use tracing::{info, trace, warn};
 
 use crate::{
     contracts::{IUniswapV2Router02, IERC20},
@@ -23,9 +23,7 @@ impl EthClient {
     }
 
     /// Check which accounts need ETH and have swappable tokens
-    pub async fn check_swap_conditions(
-        &self,
-    ) -> Result<Vec<(usize, String, U256, U256)>, ClientError> {
+    async fn check_swap_conditions(&self) -> Result<Vec<(usize, String, U256, U256)>, ClientError> {
         // Early return if Uniswap is not configured
         let Some(uniswap) = self.uniswap.as_ref() else {
             trace!("Uniswap disabled, skipping swap condition checks");
@@ -86,10 +84,9 @@ impl EthClient {
                 // Only add to candidates if we can get at least the target ETH amount
                 if estimated_eth_output >= target_eth_to_get {
                     info!(
-                        "Account {account} can swap {} {token_name} tokens for up to ~{} ETH (target: {})",
+                        "Account {account} can swap {} {token_name} tokens for up to {} ETH",
                         format_units(available_tokens, token_decimals).unwrap(),
                         format_ether(estimated_eth_output),
-                        format_ether(target_eth_to_get)
                     );
                     swap_candidates.push((
                         account_idx,
@@ -97,13 +94,6 @@ impl EthClient {
                         available_tokens,
                         target_eth_to_get,
                     ));
-                } else {
-                    debug!(
-                        "Account {account} has {} {token_name} tokens but can only get {} ETH, need {} ETH",
-                        format_units(available_tokens, token_decimals).unwrap(),
-                        format_ether(estimated_eth_output),
-                        format_ether(target_eth_to_get)
-                    );
                 }
             }
         }
@@ -112,7 +102,7 @@ impl EthClient {
     }
 
     /// Execute token-to-ETH swap via Uniswap V2
-    pub async fn swap_tokens_for_eth(
+    async fn swap_tokens_for_eth(
         &self,
         provider: impl Provider,
         account_idx: usize,
@@ -163,13 +153,17 @@ impl EthClient {
             .as_secs()
             + uniswap.config.swap_deadline.as_secs();
 
+        let token = IERC20::new(token_config.address, &provider);
+        let token_decimals = token.decimals().call().await?;
+
         info!(
-            "Swapping {amount_to_swap} {token_name} for at least {} ETH",
+            "Swapping {} {token_name} for at least {} ETH",
+            format_units(amount_to_swap, token_decimals).unwrap(),
             format_ether(min_eth_out)
         );
 
         // First approve the router to spend tokens
-        let token = IERC20::new(token_config.address, &provider);
+
         let approve_tx = token
             .approve(uniswap.config.router, amount_to_swap)
             .from(account)
