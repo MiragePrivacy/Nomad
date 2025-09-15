@@ -169,7 +169,7 @@ impl EthClient {
         );
 
         // First approve the router to spend tokens
-        let token = IERC20::new(token_config.address, &self.read_provider);
+        let token = IERC20::new(token_config.address, &provider);
         let approve_tx = token
             .approve(uniswap.config.router, amount_to_swap)
             .from(account)
@@ -205,22 +205,19 @@ impl EthClient {
 
     /// Monitor and maintain minimum ETH balances by swapping tokens
     pub async fn maintain_eth_balances(&self) -> Result<(), ClientError> {
-        let provider = self.wallet_provider().await?;
         let swap_candidates = self.check_swap_conditions().await?;
 
         if swap_candidates.is_empty() {
-            debug!("No swap opportunities found");
             return Ok(());
         }
 
         info!("Found {} swap opportunities", swap_candidates.len());
 
-        // Only execute one swap per account index
-        let mut success = HashSet::new();
-
-        // Execute swaps for accounts that need ETH
+        // Execute one swap for each account that needs ETH
+        let mut completed = HashSet::new();
+        let provider = self.wallet_provider().await?;
         for (account_idx, token_name, max_tokens, target_eth) in swap_candidates {
-            if success.contains(&account_idx) {
+            if completed.contains(&account_idx) {
                 continue;
             }
             match self
@@ -234,7 +231,7 @@ impl EthClient {
                         self.accounts[account_idx],
                         receipt.transaction_hash
                     );
-                    success.insert(account_idx);
+                    completed.insert(account_idx);
                 }
                 Err(e) => {
                     warn!(
