@@ -1,35 +1,27 @@
-# Multi-stage Rust build
-FROM rust:1.89-slim as builder
-
-# Install required system dependencies
+FROM lukemathwalker/cargo-chef:latest-rust-1.89-slim AS chef
+WORKDIR /app
 RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Create app directory
-WORKDIR /app
-
-# Copy the entire workspace
+FROM chef AS planner
 COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
 
-# Build the CLI binary
+FROM chef AS builder
+# Build dependencies - this is the caching Docker layer!
+COPY --from=planner /app/recipe.json recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json
+# Build real application
+COPY . .
 RUN cargo build --release --bin nomad
 
-# Runtime stage
-FROM debian:bookworm-slim
-
-# Install runtime dependencies
+FROM debian:bookworm-slim AS runtime
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     openssl \
     && rm -rf /var/lib/apt/lists/*
-
-# Copy the binary from builder stage
 COPY --from=builder /app/target/release/nomad /usr/local/bin/nomad
-
-# Make binary executable
 RUN chmod +x /usr/local/bin/nomad
-
-# Set the binary as entrypoint
 ENTRYPOINT ["/usr/local/bin/nomad"]
