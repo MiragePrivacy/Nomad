@@ -71,11 +71,11 @@ pub struct UniswapRuntime {
 pub enum ClientError {
     #[error("RPC Error")]
     Rpc(#[from] RpcError<TransportErrorKind>),
-    #[error("Contract call failed: {_0}")]
+    #[error("Contract call failed")]
     Contract(#[from] alloy::contract::Error),
-    #[error("Failed to watch pending transaction: {_0}")]
+    #[error("Failed to watch pending transaction")]
     Pending(#[from] alloy::providers::PendingTransactionError),
-    #[error("Failed to generate proof: {_0}")]
+    #[error("Failed to generate proof")]
     Proof(#[from] proof::ProofError),
     #[error("Contract already bonded")]
     AlreadyBonded,

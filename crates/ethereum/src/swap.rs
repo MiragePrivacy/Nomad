@@ -8,6 +8,7 @@ use alloy::{
     providers::Provider,
     rpc::types::TransactionReceipt,
 };
+use eyre::bail;
 use tracing::{debug, info, trace, warn};
 
 use crate::{
@@ -118,11 +119,9 @@ impl EthClient {
         token_name: &str,
         max_tokens_available: U256,
         target_eth_amount: U256,
-    ) -> Result<TransactionReceipt, ClientError> {
+    ) -> eyre::Result<TransactionReceipt> {
         let Some(uniswap) = self.uniswap.as_ref() else {
-            return Err(ClientError::SwapFailed(
-                "Uniswap not configured".to_string(),
-            ));
+            bail!("Uniswap not configured");
         };
 
         let token_config = self
@@ -147,20 +146,10 @@ impl EthClient {
 
         // Verify we have enough tokens available
         if amount_to_swap > max_tokens_available {
-            return Err(ClientError::SwapFailed(format!(
-                "Not enough tokens available: need {amount_to_swap}, have {max_tokens_available}"
-            )));
-        }
-
-        // Verify we have enough tokens
-        let token = IERC20::new(token_config.address, &self.read_provider);
-        let balance = token.balanceOf(account).call().await?;
-
-        if balance < amount_to_swap {
-            return Err(ClientError::InsufficientTokenBalance(
+            Err(ClientError::InsufficientTokenBalance(
                 amount_to_swap,
-                balance,
-            ));
+                max_tokens_available,
+            ))?;
         }
 
         // Apply slippage protection - we expect to get the target ETH amount
@@ -180,6 +169,7 @@ impl EthClient {
         );
 
         // First approve the router to spend tokens
+        let token = IERC20::new(token_config.address, &self.read_provider);
         let approve_tx = token
             .approve(uniswap.config.router, amount_to_swap)
             .from(account)
@@ -248,7 +238,7 @@ impl EthClient {
                 }
                 Err(e) => {
                     warn!(
-                        "Failed to swap {token_name} to {} ETH for account {}: {e}",
+                        "Failed to swap {token_name} to {} ETH for account {}: {e:?}",
                         format_ether(target_eth),
                         self.accounts[account_idx],
                     );
