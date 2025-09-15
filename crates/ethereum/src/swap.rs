@@ -1,7 +1,10 @@
 use std::time::Duration;
 
 use alloy::{
-    primitives::{utils::format_ether, U256},
+    primitives::{
+        utils::{format_ether, format_units},
+        U256,
+    },
     providers::Provider,
     rpc::types::TransactionReceipt,
 };
@@ -33,75 +36,73 @@ impl EthClient {
             let eth_balance = self.read_provider.get_balance(account).await?;
 
             // Check if this account needs ETH
-            if eth_balance < self.min_eth.0 {
-                let eth_deficit = self.min_eth.0 - eth_balance;
+            if eth_balance >= self.min_eth.0 {
+                continue;
+            }
+            let eth_deficit = self.min_eth.0 - eth_balance;
 
-                // Calculate how many multiples of target_eth_amount we need
-                let multiples_needed =
-                    (eth_deficit + uniswap.target_eth_wei - U256::from(1)) / uniswap.target_eth_wei; // Ceiling division
-                let target_eth_to_get = multiples_needed * uniswap.target_eth_wei;
+            // Calculate how many multiples of target_eth_amount we need
+            let multiples_needed =
+                (eth_deficit + uniswap.target_eth_wei - U256::from(1)) / uniswap.target_eth_wei; // Ceiling division
+            let target_eth_to_get = multiples_needed * uniswap.target_eth_wei;
 
-                info!(
-                    "Account {} needs ETH: has {}, needs {}, target to swap for: {}",
-                    account,
-                    format_ether(eth_balance),
-                    format_ether(self.min_eth.0),
-                    format_ether(target_eth_to_get)
-                );
+            info!(
+                "Account {account} needs ETH: has {}, needs {}, target to swap for: {}",
+                format_ether(eth_balance),
+                format_ether(self.min_eth.0),
+                format_ether(target_eth_to_get)
+            );
 
-                // Check if any tokens can be swapped to get the target ETH amount
-                for (token_name, token_config) in &self.config.token {
-                    if !token_config.swap {
-                        continue;
-                    }
+            // Check if any tokens can be swapped to get the target ETH amount
+            for (token_name, token_config) in &self.config.token {
+                if !token_config.swap {
+                    continue;
+                }
 
-                    let token = IERC20::new(token_config.address, &self.read_provider);
-                    let token_balance = token.balanceOf(account).call().await?;
+                let token = IERC20::new(token_config.address, &self.read_provider);
+                let token_balance = token.balanceOf(account).call().await?;
+                let token_decimals = token.decimals().call().await?;
 
-                    // If we have more than min_balance, check if we can swap enough for target ETH
-                    if token_balance > token_config.min_balance {
-                        let available_tokens = token_balance - token_config.min_balance;
+                // If we have more than min_balance, check if we can swap enough for target ETH
+                if token_balance <= token_config.min_balance {
+                    continue;
+                }
 
-                        // Get rough estimate of tokens needed for target ETH amount
-                        // (We'll do exact calculation in swap_tokens_for_eth)
-                        let router =
-                            IUniswapV2Router02::new(uniswap.config.router, &self.read_provider);
-                        let path = vec![token_config.address, uniswap.weth_address];
+                let available_tokens = token_balance - token_config.min_balance;
 
-                        // Try to get quote for available tokens to see if we can get enough ETH
-                        if let Ok(amounts_out) =
-                            router.getAmountsOut(available_tokens, path).call().await
-                        {
-                            let estimated_eth_output = amounts_out[1];
+                // Get rough estimate of tokens needed for target ETH amount
+                // (We'll do exact calculation in swap_tokens_for_eth)
+                let router = IUniswapV2Router02::new(uniswap.config.router, &self.read_provider);
+                let path = vec![token_config.address, uniswap.weth_address];
 
-                            // Only add to candidates if we can get at least the target ETH amount
-                            if estimated_eth_output >= target_eth_to_get {
-                                info!(
-                                    "Account {} can swap {} {} tokens for ~{} ETH (target: {})",
-                                    account,
-                                    available_tokens,
-                                    token_name,
-                                    format_ether(estimated_eth_output),
-                                    format_ether(target_eth_to_get)
-                                );
-                                swap_candidates.push((
-                                    account_idx,
-                                    token_name.clone(),
-                                    available_tokens,
-                                    target_eth_to_get,
-                                ));
-                            } else {
-                                debug!(
-                                    "Account {} has {} {} tokens but can only get {} ETH, need {} ETH",
-                                    account,
-                                    available_tokens,
-                                    token_name,
-                                    format_ether(estimated_eth_output),
-                                    format_ether(target_eth_to_get)
-                                );
-                            }
-                        }
-                    }
+                // Try to get quote for available tokens to see if we can get enough ETH
+                let Ok(amounts_out) = router.getAmountsOut(available_tokens, path).call().await
+                else {
+                    continue;
+                };
+                let estimated_eth_output = amounts_out[1];
+
+                // Only add to candidates if we can get at least the target ETH amount
+                if estimated_eth_output >= target_eth_to_get {
+                    info!(
+                        "Account {account} can swap {} {token_name} tokens for up to ~{} ETH (target: {})",
+                        format_units(available_tokens, token_decimals).unwrap(),
+                        format_ether(estimated_eth_output),
+                        format_ether(target_eth_to_get)
+                    );
+                    swap_candidates.push((
+                        account_idx,
+                        token_name.clone(),
+                        available_tokens,
+                        target_eth_to_get,
+                    ));
+                } else {
+                    debug!(
+                        "Account {account} has {} {token_name} tokens but can only get {} ETH, need {} ETH",
+                        format_units(available_tokens, token_decimals).unwrap(),
+                        format_ether(estimated_eth_output),
+                        format_ether(target_eth_to_get)
+                    );
                 }
             }
         }
@@ -139,24 +140,17 @@ impl EthClient {
         let path = vec![token_config.address, uniswap.weth_address];
 
         // Calculate exact tokens needed for target ETH amount
-        // We'll use the maximum available tokens but verify we get at least target ETH
-        let amounts_out = router
-            .getAmountsOut(max_tokens_available, path.clone())
+        let amount_to_swap = router
+            .getAmountsIn(target_eth_amount, path.clone())
             .call()
-            .await?;
-        let expected_eth = amounts_out[1];
+            .await?[0];
 
-        // Verify we can get at least the target ETH amount
-        if expected_eth < target_eth_amount {
+        // Verify we have enough tokens available
+        if amount_to_swap > max_tokens_available {
             return Err(ClientError::SwapFailed(format!(
-                "Cannot get enough ETH: need {}, can only get {} with {} tokens",
-                format_ether(target_eth_amount),
-                format_ether(expected_eth),
-                max_tokens_available
+                "Not enough tokens available: need {amount_to_swap}, have {max_tokens_available}"
             )));
         }
-
-        let amount_to_swap = max_tokens_available;
 
         // Verify we have enough tokens
         let token = IERC20::new(token_config.address, &self.read_provider);
@@ -169,9 +163,9 @@ impl EthClient {
             ));
         }
 
-        // Apply slippage protection
-        let min_eth_out =
-            expected_eth * U256::from(100 - uniswap.config.max_slippage_percent) / U256::from(100);
+        // Apply slippage protection - we expect to get the target ETH amount
+        let min_eth_out = target_eth_amount * U256::from(100 - uniswap.config.max_slippage_percent)
+            / U256::from(100);
 
         // Set deadline
         let deadline = std::time::SystemTime::now()
@@ -181,9 +175,7 @@ impl EthClient {
             + uniswap.config.swap_deadline.as_secs();
 
         info!(
-            "Swapping {} {} for at least {} ETH",
-            amount_to_swap,
-            token_name,
+            "Swapping {amount_to_swap} {token_name} for at least {} ETH",
             format_ether(min_eth_out)
         );
 
@@ -241,22 +233,17 @@ impl EthClient {
             {
                 Ok(receipt) => {
                     info!(
-                        "Successfully swapped {} {} to ETH for account {} (target: {} ETH): {}",
-                        max_tokens,
-                        token_name,
-                        self.accounts[account_idx],
+                        "Successfully swapped {token_name} to {} ETH for account {}: {}",
                         format_ether(target_eth),
+                        self.accounts[account_idx],
                         receipt.transaction_hash
                     );
                 }
                 Err(e) => {
                     warn!(
-                        "Failed to swap {} {} for account {} (target: {} ETH): {}",
-                        token_name,
-                        max_tokens,
-                        self.accounts[account_idx],
+                        "Failed to swap {token_name} to {} ETH for account {}: {e}",
                         format_ether(target_eth),
-                        e
+                        self.accounts[account_idx],
                     );
                 }
             }
