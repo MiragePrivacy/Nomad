@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{collections::HashSet, time::Duration};
 
 use alloy::{
     primitives::{
@@ -225,8 +225,14 @@ impl EthClient {
 
         info!("Found {} swap opportunities", swap_candidates.len());
 
+        // Only execute one swap per account index
+        let mut success = HashSet::new();
+
         // Execute swaps for accounts that need ETH
         for (account_idx, token_name, max_tokens, target_eth) in swap_candidates {
+            if success.contains(&account_idx) {
+                continue;
+            }
             match self
                 .swap_tokens_for_eth(&provider, account_idx, &token_name, max_tokens, target_eth)
                 .await
@@ -238,6 +244,7 @@ impl EthClient {
                         self.accounts[account_idx],
                         receipt.transaction_hash
                     );
+                    success.insert(account_idx);
                 }
                 Err(e) => {
                     warn!(
