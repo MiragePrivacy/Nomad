@@ -14,6 +14,7 @@ use nomad_pool::SignalPool;
 use nomad_vm::{NomadVm, VmSocket};
 
 pub mod config;
+mod enclave;
 mod execute;
 
 tracer_name!("nomad");

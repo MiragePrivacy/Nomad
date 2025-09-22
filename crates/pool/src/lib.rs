@@ -36,11 +36,11 @@ impl SignalPool {
     }
 
     /// Insert a signal into the pool, returning true if not duplicated
-    pub async fn insert(&self, signal: SignalPayload) -> bool {
+    pub fn insert(&self, signal: SignalPayload) -> bool {
         // Hash signal and insert into cache
         let hasher = &mut std::hash::DefaultHasher::new();
         signal.hash(hasher);
-        if self.cache.put_async(hasher.finish(), ()).await.is_err() {
+        if self.cache.put_sync(hasher.finish(), ()).is_err() {
             return false;
         }
 

@@ -135,7 +135,7 @@ impl P2pNode {
 
                         // Insert signal into our own signal pool
                         if !self.read_only.load(std::sync::atomic::Ordering::Relaxed) {
-                            self.signal_pool.insert(signal).await;
+                            self.signal_pool.insert(signal);
                         }
 
                         // Publish signal to the network
@@ -191,7 +191,7 @@ impl P2pNode {
                         };
 
                         // Insert signal to the pool
-                        let duplicate = !self.signal_pool.insert(signal).await;
+                        let duplicate = !self.signal_pool.insert(signal);
                         info!(
                             duplicate,
                             peer = ?propagation_source,

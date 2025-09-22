@@ -1,0 +1,30 @@
+[package]
+name = "nomad-enclave"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+nomad-types = { path = "../types" }
+nomad-pool = { path = "../pool" }
+
+eyre.workspace = true
+serde_json.workspace = true
+
+sgx-isa = { version = "0.4.1", features = ["serde"] }
+sha2 = "=0.10"
+rdrand = "=0.8.3"
+libsecp256k1  = "=0.7.1"
+
+[dependencies.ecies]
+# Notes about cryptography dependencies:
+#   - `aes-gcm`: pure rust, has been audited
+#   - `libsecp256k1`: pure rust, from paritytech
+#   - `rand_core::OsRng` -> `getrandom`: uses RDRAND on SGX
+version = "=0.2.7"
+default-features = false
+features = ["pure", "std"]
+
+[dependencies.bip32]
+version = "0.5.2"
+default-features = false
+features = ["std", "k256"]

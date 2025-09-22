@@ -1,6 +1,6 @@
 use std::hash::{Hash, Hasher};
 
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Address, Bytes, TxHash, U256};
 use serde::{Deserialize, Serialize};
 use url::Url;
 
@@ -37,6 +37,22 @@ impl SignalPayload {
             _ => None,
         }
     }
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub enum EnclaveMessage {
+    SignalFailure {
+        hash: [u8; 32],
+    },
+    SignalCompleted {
+        hash: [u8; 32],
+        bond: TxHash,
+        transfer: TxHash,
+    },
+    RewardsCollected {
+        hash: [u8; 32],
+        collect: TxHash,
+    },
 }
 
 /// Fully encrypted signal containing the puzzle and relay address
