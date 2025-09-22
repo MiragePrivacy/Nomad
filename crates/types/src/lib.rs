@@ -117,7 +117,7 @@ impl std::fmt::Debug for Signal {
     }
 }
 
-#[derive(Deserialize, Serialize, Clone, Debug)]
+#[derive(Deserialize, Serialize, ToSchema, Clone, Debug)]
 pub struct ReceiptFormat {
     pub start_time: String,
     pub end_time: String,
