@@ -7,6 +7,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use tokio::{net::TcpListener, sync::mpsc::UnboundedSender};
+use tower_http::cors::{self, CorsLayer};
 use tracing::{debug, info};
 
 use nomad_types::{primitives::hex, SignalPayload};
@@ -163,6 +164,16 @@ pub async fn spawn_api_server(
 
     let app = router
         .merge(Scalar::with_url("/scalar", api))
+        .layer(
+            CorsLayer::new()
+                .allow_origin(cors::Any)
+                .allow_headers(cors::Any)
+                .allow_methods([
+                    axum::http::Method::GET,
+                    axum::http::Method::POST,
+                    axum::http::Method::OPTIONS,
+                ]),
+        )
         .with_state(AppState {
             is_bootstrap,
             read_only,
