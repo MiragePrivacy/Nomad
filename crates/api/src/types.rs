@@ -38,7 +38,7 @@ pub struct AttestResponse {
     pub attestation: Option<Attestation>,
     /// Enclave global key (extracted from quote body's enclave report)
     #[schema(value_type = String)]
-    pub key: primitives::FixedBytes<33>,
+    pub global_key: primitives::FixedBytes<33>,
     /// True if the enclave is running in debug mode
     pub is_debug: bool,
 }

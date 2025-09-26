@@ -114,9 +114,10 @@ pub async fn spawn_api_server(
 ) -> eyre::Result<()> {
     debug!(?config);
 
+    // Create fixed attestation response payload
     let attestation = Arc::new(AttestResponse {
         attestation: attestation.map(|(quote, collateral)| Attestation { quote, collateral }),
-        key: publickey.into(),
+        global_key: publickey.into(),
         is_debug,
     });
 
