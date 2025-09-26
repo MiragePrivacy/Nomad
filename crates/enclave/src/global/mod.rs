@@ -21,45 +21,51 @@ const LOCAL_SECRET_KEY_LABEL: &str = "mirage_ephemeral_key";
 pub fn initialize_global_secret(
     stream: &mut TcpStream,
     is_debug: bool,
-) -> eyre::Result<(SecretKey, PublicKey)> {
+) -> eyre::Result<(SecretKey, PublicKey, Vec<u8>, Vec<u8>)> {
     let mut mode = [0];
     stream.read_exact(&mut mode)?;
-    match mode[0] {
+    let (secret, public) = match mode[0] {
         // Generate key from scratch
         0 => {
             let (secret, public) = derive_enclave_key(GLOBAL_SECRET_KEY_LABEL)?;
-
             // Write sealed key back to userspace
             let sealed_key = seal_key_data(secret)?;
             let len = (sealed_key.len() as u32).to_be_bytes();
             stream.write_all(&len)?;
             stream.write_all(&sealed_key)?;
-
-            Ok((secret, public))
+            (secret, public)
         }
         // Peer bootstrap
         1 => {
             // create a client key and generate a (client) attestation for it
-            let (secret, public) = derive_enclave_key(LOCAL_SECRET_KEY_LABEL)?;
-            let (quote, collateral) =
-                crate::generate_attestation_for_key(stream, public, is_debug, false)?;
+            let (client_secret, client_public) = derive_enclave_key(LOCAL_SECRET_KEY_LABEL)?;
+            let (client_quote, client_collateral) =
+                generate_attestation_for_key(stream, client_public, is_debug, false)?;
 
             // Read peers and fetch the secret from them
             let peers = read_bootstrap_peers(stream)?;
-            let (secret, public) = fetch_global_secret(peers, secret, public, quote, collateral)?;
+            let (secret, public) = fetch_global_secret(
+                peers,
+                client_secret,
+                client_public,
+                client_quote,
+                client_collateral,
+            )?;
 
             // Write sealed key back to userspace
             let sealed_key = seal_key_data(secret)?;
             let len = (sealed_key.len() as u32).to_be_bytes();
             stream.write_all(&len)?;
             stream.write_all(&sealed_key)?;
-
-            Ok((secret, public))
+            (secret, public)
         }
         // Unseal from userspace
-        2 => read_and_unseal_global_secret(stream),
+        2 => read_and_unseal_global_secret(stream)?,
         _ => bail!("Invalid enclave startup mode"),
-    }
+    };
+
+    let (quote, collateral) = generate_attestation_for_key(stream, public, is_debug, true)?;
+    Ok((secret, public, quote, collateral))
 }
 
 /// Generate a new secret key
@@ -78,6 +84,55 @@ fn seal_key_data(secret: SecretKey) -> eyre::Result<Vec<u8>> {
         GLOBAL_SECRET_SEAL_LABEL,
         &secret.serialize(),
     )
+}
+
+/// Get an attestation for a global or ephemeral public key.
+///
+/// Each report identifies the key attesting for as a client or global key.
+/// This is to prevent using the exchange attestations to spoof the global key.
+///
+/// Reportdata:
+/// ```text
+/// [ 33 byte secp256k1 public key . zero padding . debug mode . global key ]
+/// ```
+fn generate_attestation_for_key(
+    stream: &mut TcpStream,
+    publickey: PublicKey,
+    is_debug: bool,
+    is_global: bool,
+) -> eyre::Result<(Vec<u8>, Vec<u8>)> {
+    // Create report data
+    let mut data = [0u8; 64];
+    data[0..33].copy_from_slice(&publickey.serialize_compressed());
+    data[62] = is_debug as u8;
+    data[63] = is_global as u8;
+
+    #[cfg(target_env = "sgx")]
+    // Generate an attestation report for the enclave public key and eoa debug mode
+    let report =
+        sgx_isa::Report::for_target(&sgx_isa::Targetinfo::from(Report::for_self()), &data).to_vec();
+
+    #[cfg(not(target_env = "sgx"))]
+    // If we're running the enclave without sgx, just send the raw public key
+    let report = data.to_vec();
+
+    let len = (report.len() as u32).to_be_bytes();
+    stream.write_all(&len)?;
+    stream.write_all(&report)?;
+
+    // Read quote response
+    let mut len = [0; 4];
+    stream.read_exact(&mut len)?;
+    let mut quote = vec![0; u32::from_be_bytes(len) as usize];
+    stream.read_exact(&mut quote)?;
+
+    // Read collateral response
+    let mut len = [0; 4];
+    stream.read_exact(&mut len)?;
+    let mut collateral = vec![0; u32::from_be_bytes(len) as usize];
+    stream.read_exact(&mut collateral)?;
+
+    Ok((quote, collateral))
 }
 
 /// Read a list of peers from the stream.

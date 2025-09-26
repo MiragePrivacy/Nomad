@@ -1,12 +1,9 @@
-use std::{
-    io::{Read, Write},
-    net::TcpStream,
-};
+use std::{io::Read, net::TcpStream};
 
-use ecies::PublicKey;
 use nomad_types::{Signal, SignalPayload};
 
 mod bootstrap;
+mod ethereum;
 mod global;
 mod sealing;
 
@@ -23,16 +20,19 @@ pub fn main_impl(addr: &str) -> eyre::Result<()> {
     let mut stream = TcpStream::connect(addr)?;
 
     // Bootstrap and/or unseal node eoa accounts
-    let (accounts, is_debug) = bootstrap::initialize_eoas(&mut stream)?;
+    let (keys, is_debug) = bootstrap::initialize_eoas(&mut stream)?;
     println!(
         "[init] Loaded {}{} EOAs",
-        accounts.len(),
+        keys.len(),
         if is_debug { " debug" } else { "" }
     );
 
+    let eth_client = ethereum::EthClient::new(keys, "todo", "todo".into(), "todo".into())?;
+
     // Fetch, generate, or unseal the global secret
-    let (secret, public) = global::initialize_global_secret(&mut stream, is_debug)?;
-    let (_quote, _collateral) = generate_attestation_for_key(&mut stream, public, is_debug, true)?;
+    let (secret, public, _quote, _collateral) =
+        global::initialize_global_secret(&mut stream, is_debug)?;
+
     println!(
         "[init] Global Enclave Key (secp256k1): 0x{}",
         hex::encode(public.serialize_compressed())
@@ -58,55 +58,12 @@ pub fn main_impl(addr: &str) -> eyre::Result<()> {
         };
         let signal: Signal = serde_json::from_slice(&bytes)?;
 
-        todo!("execute {signal}");
+        // Execute signal
+        let [eoa_1, eoa_2] = eth_client.select_accounts(&signal)?;
+        let [_approve_tx, _bond_tx] = eth_client.bond(eoa_1, &signal)?;
+        let transfer_tx = eth_client.transfer(eoa_2, &signal)?;
+        let _collect_tx = eth_client.collect(eoa_1, &signal, transfer_tx)?;
+
+        // TODO: Sign and send acknowledgements
     }
-}
-
-/// Get an attestation for a global or ephemeral public key.
-///
-/// Each report identifies the key attesting for as a client or global key.
-/// This is to prevent using the exchange attestations to spoof the global key.
-///
-/// Reportdata:
-/// ```text
-/// [ 33 byte secp256k1 public key . zero padding . debug mode . global key ]
-/// ```
-fn generate_attestation_for_key(
-    stream: &mut TcpStream,
-    publickey: PublicKey,
-    is_debug: bool,
-    is_global: bool,
-) -> eyre::Result<(Vec<u8>, Vec<u8>)> {
-    // Create report data
-    let mut data = [0u8; 64];
-    data[0..33].copy_from_slice(&publickey.serialize_compressed());
-    data[62] = is_debug as u8;
-    data[63] = is_global as u8;
-
-    #[cfg(target_env = "sgx")]
-    // Generate an attestation report for the enclave public key and eoa debug mode
-    let report =
-        sgx_isa::Report::for_target(&sgx_isa::Targetinfo::from(Report::for_self()), &data).to_vec();
-
-    #[cfg(not(target_env = "sgx"))]
-    // If we're running the enclave without sgx, just send the raw public key
-    let report = data.to_vec();
-
-    let len = (report.len() as u32).to_be_bytes();
-    stream.write_all(&len)?;
-    stream.write_all(&report)?;
-
-    // Read quote response
-    let mut len = [0; 4];
-    stream.read_exact(&mut len)?;
-    let mut quote = vec![0; u32::from_be_bytes(len) as usize];
-    stream.read_exact(&mut quote)?;
-
-    // Read collateral response
-    let mut len = [0; 4];
-    stream.read_exact(&mut len)?;
-    let mut collateral = vec![0; u32::from_be_bytes(len) as usize];
-    stream.read_exact(&mut collateral)?;
-
-    Ok((quote, collateral))
 }
