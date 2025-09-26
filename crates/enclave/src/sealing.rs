@@ -131,7 +131,7 @@ impl SealData {
 /// Derive a sealing key for the given `seal_data` configuration
 #[cfg(target_env = "sgx")]
 fn egetkey(seal_data: &SealData) -> eyre::Result<[u8; 32]> {
-    use sgx_isa::{Attributes, Keyname, Keyrequest, Miscselect};
+    use sgx_isa::{Keyname, Keyrequest};
     let Ok(key) = Keyrequest {
         keyname: Keyname::Seal as _,
         keypolicy: seal_data.policy,
@@ -145,7 +145,7 @@ fn egetkey(seal_data: &SealData) -> eyre::Result<[u8; 32]> {
     .egetkey() else {
         bail!("Failed to call egetkey");
     };
-    Ok(Sha256::digest(&key).into())
+    Ok(Sha256::digest(key).into())
 }
 
 /// Derive a dummy sealing key on non sgx targets
