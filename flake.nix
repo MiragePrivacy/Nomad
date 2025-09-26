@@ -2,6 +2,7 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     foundry.url = "github:shazow/foundry.nix/stable";
+    dcap-nixpkgs.url = "github:ozwaldorf/nixpkgs/sgx-dcap-default-qpl-1.21";
   };
 
   outputs =
@@ -12,6 +13,7 @@
         inherit system;
         overlays = [ inputs.foundry.overlay ];
       };
+      dcapPkgs = import inputs.dcap-nixpkgs { inherit system; };
     in
     {
       devShells.${system}.default = pkgs.mkShell {
@@ -26,6 +28,7 @@
           foundry
           jq
           bc
+          dcapPkgs.sgx-dcap-default-qpl
         ];
       };
     };
