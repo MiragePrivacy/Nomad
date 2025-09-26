@@ -8,23 +8,28 @@ nomad-types = { path = "../types" }
 nomad-pool = { path = "../pool" }
 
 eyre.workspace = true
+serde.workspace = true
 serde_json.workspace = true
+arrayref = "0.3.9"
+hex = "0.4.3"
+rdrand = "0.8.3"
+sha2 = "0.10.9"
 
-sgx-isa = { version = "0.4.1", features = ["serde"] }
-sha2 = "=0.10"
-rdrand = "=0.8.3"
-libsecp256k1  = "=0.7.1"
+# Generating enclave attestations
+sgx-isa = "0.4.1"
 
+# Enclave signatures
+libsecp256k1  = "=0.7.2"
+
+# Sealing data
+aes-gcm = "=0.10.3"
+
+# Signal decryption
 [dependencies.ecies]
 # Notes about cryptography dependencies:
 #   - `aes-gcm`: pure rust, has been audited
 #   - `libsecp256k1`: pure rust, from paritytech
 #   - `rand_core::OsRng` -> `getrandom`: uses RDRAND on SGX
-version = "=0.2.7"
+version = "=0.2.9"
 default-features = false
 features = ["pure", "std"]
-
-[dependencies.bip32]
-version = "0.5.2"
-default-features = false
-features = ["std", "k256"]

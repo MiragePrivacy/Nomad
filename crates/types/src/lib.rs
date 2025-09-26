@@ -12,33 +12,6 @@ pub use hex_schema::*;
 pub use selectors::*;
 use utoipa::ToSchema;
 
-#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq, Hash)]
-pub enum SignalPayload {
-    Unencrypted(Signal),
-    Encrypted(EncryptedSignal),
-    TracedUnencrypted(Signal, [u8; 16]),
-    TracedEncrypted(EncryptedSignal, [u8; 16]),
-}
-
-impl SignalPayload {
-    pub fn token_contract(&self) -> Address {
-        match self {
-            SignalPayload::Encrypted(EncryptedSignal { token_contract, .. })
-            | SignalPayload::Unencrypted(Signal { token_contract, .. })
-            | SignalPayload::TracedEncrypted(EncryptedSignal { token_contract, .. }, _)
-            | SignalPayload::TracedUnencrypted(Signal { token_contract, .. }, _) => *token_contract,
-        }
-    }
-
-    pub fn trace_id(&self) -> Option<[u8; 16]> {
-        match self {
-            SignalPayload::TracedEncrypted(_, trace)
-            | SignalPayload::TracedUnencrypted(_, trace) => Some(*trace),
-            _ => None,
-        }
-    }
-}
-
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub enum EnclaveMessage {
     SignalFailure {
@@ -55,22 +28,12 @@ pub enum EnclaveMessage {
     },
 }
 
-/// Fully encrypted signal containing the puzzle and relay address
+/// Fully encrypted signal payload containing a json signal encrypted with ecies for
+/// an enclave public key
 #[derive(Deserialize, Serialize, ToSchema, Debug, Clone, PartialEq, Eq, Hash)]
-pub struct EncryptedSignal {
-    /// Token contract to transfer
-    #[schema(value_type = HexAddress)]
-    pub token_contract: Address,
-    /// Relay address for submitting puzzle solutions to
-    #[schema(example = "http://your-server.com/relay")]
-    pub relay: Url,
-    /// Hex-encoded puzzle bytes
-    #[schema(value_type = HexBytes)]
-    pub puzzle: Bytes,
-    /// Hex-encoded AES-GCM encrypted data containing a json [`Signal`]
-    #[schema(value_type = HexBytes)]
-    pub data: Bytes,
-}
+#[schema(value_type = String)]
+#[schema(pattern = r"^0x[0-9a-fA-F]*$")]
+pub struct SignalPayload(pub Bytes);
 
 /// Decrypted signal payload containing all information required to execute
 #[derive(Deserialize, Serialize, ToSchema, Clone, PartialEq, Eq)]

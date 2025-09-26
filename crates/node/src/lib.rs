@@ -2,16 +2,16 @@ use std::sync::{atomic::AtomicBool, Arc};
 
 use alloy::signers::local::PrivateKeySigner;
 use eyre::Result;
+use nomad_types::SignalPayload;
 use opentelemetry::{global::meter_provider, metrics::Counter};
 use otel_instrument::tracer_name;
-use tokio::sync::mpsc::unbounded_channel;
-use tracing::{error, info, warn};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
+use tracing::warn;
 
 use nomad_api::spawn_api_server;
-use nomad_ethereum::{ClientError, EthClient};
+use nomad_ethereum::EthClient;
 use nomad_p2p::P2pNode;
 use nomad_pool::SignalPool;
-use nomad_vm::{NomadVm, VmSocket};
 
 pub mod config;
 mod enclave;
@@ -20,23 +20,25 @@ mod execute;
 tracer_name!("nomad");
 
 pub struct NomadNode {
+    tx: UnboundedSender<SignalPayload>,
     signal_pool: SignalPool,
     eth_client: EthClient,
-    vm_socket: VmSocket,
-    success: Counter<u64>,
-    failure: Counter<u64>,
+    _success: Counter<u64>,
+    _failure: Counter<u64>,
 }
 
 impl NomadNode {
     /// Initialize the node with p2p, an eth client, and a vm worker thread
-    pub async fn init(config: config::Config, signers: Vec<PrivateKeySigner>) -> Result<Self> {
-        // If we dont have two keys, don't process any signals
-        let read_only = signers.is_empty();
-        if read_only {
-            warn!("No signers provided; running node in read-only mode!");
-        }
+    pub async fn init(config: config::Config) -> Result<Self> {
+        let read_only = config.enclave.num_accounts < 2;
+
+        // Spawn enclave
+        let (tx, rx) = unbounded_channel();
+        let (enclave_tx, _enclave_rx) = unbounded_channel();
+        let _report = enclave::spawn_enclave(&config.enclave, rx, enclave_tx).await?;
 
         // Spawn api server
+        // TODO: add attestation endpoint with report and enclave public key
         let (signal_tx, signal_rx) = unbounded_channel();
         let _ = spawn_api_server(
             config.api,
@@ -52,11 +54,14 @@ impl NomadNode {
         P2pNode::new(config.p2p, signal_pool.clone(), read_only, Some(signal_rx))?.spawn();
 
         // Build eth client
-        let mut eth_client = EthClient::new(config.eth, signers).await?;
+        let accounts = config
+            .enclave
+            .debug_keys
+            .iter()
+            .map(|b| PrivateKeySigner::from_slice(b).expect("valid debug key"))
+            .collect();
+        let mut eth_client = EthClient::new(config.eth, accounts).await?;
         eth_client.enable_balance_metrics().await;
-
-        // Spawn a vm worker thread
-        let vm_socket = NomadVm::new(config.vm.max_cycles).spawn();
 
         // Setup metrics
         let meter = meter_provider().meter("nomad");
@@ -72,11 +77,11 @@ impl NomadNode {
             .build();
 
         Ok(Self {
+            tx,
             signal_pool,
             eth_client,
-            vm_socket,
-            success,
-            failure,
+            _success: success,
+            _failure: failure,
         })
     }
 
@@ -110,27 +115,14 @@ impl NomadNode {
         });
 
         loop {
-            if let Err(e) = self.next().await {
-                if let Ok(ClientError::NotEnoughEth(_, accounts, need)) = e.downcast() {
-                    // wait for eth to be transferred
-                    self.eth_client.wait_for_eth(&accounts, need).await?;
-                }
-            }
+            self.next().await?;
         }
     }
 
     /// Handle the next signal from the pool (blocking until one is available)
     pub async fn next(&self) -> Result<()> {
         let signal = self.signal_pool.sample().await;
-        execute::execute_signal(signal, &self.eth_client, &self.vm_socket)
-            .await
-            .inspect(|_| {
-                info!("Successfully executed signal");
-                self.success.add(1, &[]);
-            })
-            .inspect_err(|e| {
-                error!("Failed to execute signal: {e:#}");
-                self.failure.add(1, &[]);
-            })
+        self.tx.send(signal)?;
+        Ok(())
     }
 }

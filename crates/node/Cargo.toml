@@ -10,7 +10,6 @@ nomad-p2p = { path = "../p2p" }
 nomad-pool = { path = "../pool" }
 nomad-api = { path = "../api" }
 nomad-types = { path = "../types" }
-nomad-vm = { path = "../vm" }
 
 alloy.workspace = true
 eyre.workspace = true
@@ -29,3 +28,10 @@ resolve-path = "0.1"
 sha3 = "0.10.8"
 toml = "0.9"
 zeroize = "1.8"
+sgx-isa = "0.4"
+
+# Import enclave code directly when not running on sgx
+nomad-enclave = { path = "../enclave", optional = true }
+
+[features]
+nosgx = ["dep:nomad-enclave"]

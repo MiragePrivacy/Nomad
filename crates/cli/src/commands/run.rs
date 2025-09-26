@@ -26,7 +26,7 @@ pub struct RunArgs {
 }
 
 impl RunArgs {
-    pub async fn execute(self, mut config: Config, signers: Vec<PrivateKeySigner>) -> Result<()> {
+    pub async fn execute(self, mut config: Config, _signers: Vec<PrivateKeySigner>) -> Result<()> {
         // Apply argument overrides to configuration
         if let Some(rpc) = self.eth_rpc.clone() {
             config.eth.rpc = rpc;
@@ -45,6 +45,6 @@ impl RunArgs {
             info!("Using Uniswap router override: {}", router_address);
         }
 
-        NomadNode::init(config, signers).await?.run().await
+        NomadNode::init(config).await?.run().await
     }
 }
