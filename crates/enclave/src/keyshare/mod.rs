@@ -7,7 +7,7 @@ use ecies::{PublicKey, SecretKey};
 use eyre::{bail, Context};
 use sgx_isa::Keypolicy;
 
-use crate::sealing::derive_ecies_key;
+use crate::{keyshare::client::KeyshareClient, sealing::derive_ecies_key};
 
 mod client;
 mod server;
@@ -46,20 +46,15 @@ pub fn initialize_global_secret(
         }
         // Peer bootstrap
         1 => {
-            // create a client key and generate a (client) attestation for it
+            // create a client key and generate an attestation for it
             let (client_secret, client_public) = derive_ecies_key(LOCAL_SECRET_KEY_LABEL)?;
             let (client_quote, client_collateral) =
                 generate_attestation_for_key(stream, client_public, is_debug, false)?;
 
             // Read peers and fetch the secret from them
             let peers = read_bootstrap_peers(stream)?;
-            let (secret, public) = fetch_global_secret(
-                peers,
-                client_secret,
-                client_public,
-                client_quote,
-                client_collateral,
-            )?;
+            let (secret, public) =
+                fetch_global_secret(peers, client_secret, client_quote, client_collateral)?;
 
             // Write sealed key back to userspace
             let sealed_key = crate::sealing::seal(
@@ -102,13 +97,12 @@ fn generate_attestation_for_key(
     data[62] = is_debug as u8;
     data[63] = is_global as u8;
 
-    #[cfg(target_env = "sgx")]
     // Generate an attestation report for the enclave public key and eoa debug mode
+    #[cfg(target_env = "sgx")]
     let report =
         sgx_isa::Report::for_target(&sgx_isa::Targetinfo::from(Report::for_self()), &data).to_vec();
-
+    // If we're running the enclave without sgx, just send the report data instead
     #[cfg(not(target_env = "sgx"))]
-    // If we're running the enclave without sgx, just send the raw public key
     let report = data.to_vec();
 
     let len = (report.len() as u32).to_be_bytes();
@@ -156,13 +150,24 @@ fn read_bootstrap_peers(stream: &mut TcpStream) -> eyre::Result<Vec<SocketAddrV4
 
 /// Dial bootstrap peers and exchange the global secret key
 fn fetch_global_secret(
-    _peers: Vec<SocketAddrV4>,
-    _secret: SecretKey,
-    _public: PublicKey,
-    _quote: Vec<u8>,
-    _collateral: Vec<u8>,
+    peers: Vec<SocketAddrV4>,
+    secret: SecretKey,
+    quote: Vec<u8>,
+    collateral: Vec<u8>,
 ) -> eyre::Result<(SecretKey, PublicKey)> {
-    unimplemented!("client.rs")
+    let client = KeyshareClient::new(secret, quote, collateral)
+        .map_err(|e| eyre::eyre!("failed to create keyshare client: {e}"))?;
+
+    for addr in peers {
+        match client.request_key(addr) {
+            // TODO: validate keypair against multiple enclaves
+            Ok(keypair) => return Ok(keypair),
+            Err(e) => {
+                eprintln!("[init] Failed to get key from remote enclave: {e}");
+            }
+        }
+    }
+    bail!("All enclaves failed to provide global key");
 }
 
 /// Read encrypted secret data from the stream and decrypt it

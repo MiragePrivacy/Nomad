@@ -14,8 +14,9 @@ hex = "0.4.3"
 rdrand = "0.8.3"
 sha2 = "0.10.9"
 
-# Generating enclave attestations
+# Enclave attestations and verification
 sgx-isa = "0.4.1"
+ra-verify = { git = "https://github.com/fleek-network/fleek-sgx", branch = "main" }
 
 # Enclave signatures
 libsecp256k1  = "=0.7.2"

@@ -15,7 +15,6 @@ tracing.workspace = true
 utoipa.workspace = true
 
 axum = { version = "0.8.1", features = ["macros"] }
-sgx-isa = { version = "0.4.1", features = ["serde"] }
 tower-http = { version = "0.6", features = ["cors"] }
 utoipa-axum = "0.2"
 utoipa-scalar = { version = "0.3", features = ["axum"] }
