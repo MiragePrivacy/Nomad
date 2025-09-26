@@ -175,7 +175,7 @@ async fn read_report_and_reply_with_quote(
 
         Ok((
             *arrayref::array_ref![payload, 0, 33],
-            payload[62] as bool,
+            payload[62] != 0,
             None,
         ))
     }
