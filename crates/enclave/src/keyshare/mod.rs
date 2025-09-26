@@ -7,12 +7,17 @@ use ecies::{PublicKey, SecretKey};
 use eyre::{bail, Context};
 use sgx_isa::Keypolicy;
 
+use crate::sealing::derive_ecies_key;
+
 mod client;
 mod server;
 
-const GLOBAL_SECRET_SEAL_LABEL: &str = "mirage_global_seal_key";
+/// Label used to derive keyshare client secret
+const LOCAL_SECRET_KEY_LABEL: &str = "mirage_client_secret";
+/// Label used to derive the global key in the first enclave
 const GLOBAL_SECRET_KEY_LABEL: &str = "mirage_global_secret";
-const LOCAL_SECRET_KEY_LABEL: &str = "mirage_ephemeral_key";
+/// Label used to derive the sealing key for the global secret
+const GLOBAL_SECRET_SEAL_LABEL: &str = "mirage_global_seal_key";
 
 /// Initialize the global secret by reading the first byte;
 ///   - 0: Generate a new key as the first bootstrap peer
@@ -27,9 +32,13 @@ pub fn initialize_global_secret(
     let (secret, public) = match mode[0] {
         // Generate key from scratch
         0 => {
-            let (secret, public) = derive_enclave_key(GLOBAL_SECRET_KEY_LABEL)?;
+            let (secret, public) = derive_ecies_key(GLOBAL_SECRET_KEY_LABEL)?;
             // Write sealed key back to userspace
-            let sealed_key = seal_key_data(secret)?;
+            let sealed_key = crate::sealing::seal(
+                Keypolicy::all(),
+                GLOBAL_SECRET_SEAL_LABEL,
+                &secret.serialize(),
+            )?;
             let len = (sealed_key.len() as u32).to_be_bytes();
             stream.write_all(&len)?;
             stream.write_all(&sealed_key)?;
@@ -38,7 +47,7 @@ pub fn initialize_global_secret(
         // Peer bootstrap
         1 => {
             // create a client key and generate a (client) attestation for it
-            let (client_secret, client_public) = derive_enclave_key(LOCAL_SECRET_KEY_LABEL)?;
+            let (client_secret, client_public) = derive_ecies_key(LOCAL_SECRET_KEY_LABEL)?;
             let (client_quote, client_collateral) =
                 generate_attestation_for_key(stream, client_public, is_debug, false)?;
 
@@ -53,7 +62,11 @@ pub fn initialize_global_secret(
             )?;
 
             // Write sealed key back to userspace
-            let sealed_key = seal_key_data(secret)?;
+            let sealed_key = crate::sealing::seal(
+                Keypolicy::all(),
+                GLOBAL_SECRET_SEAL_LABEL,
+                &secret.serialize(),
+            )?;
             let len = (sealed_key.len() as u32).to_be_bytes();
             stream.write_all(&len)?;
             stream.write_all(&sealed_key)?;
@@ -66,24 +79,6 @@ pub fn initialize_global_secret(
 
     let (quote, collateral) = generate_attestation_for_key(stream, public, is_debug, true)?;
     Ok((secret, public, quote, collateral))
-}
-
-/// Generate a new secret key
-fn derive_enclave_key(label: &str) -> eyre::Result<(SecretKey, PublicKey)> {
-    let data = crate::sealing::SealData::new_from_label(Keypolicy::all(), label);
-    let key = crate::sealing::egetkey(&data)?;
-    let secret = SecretKey::parse(&key)?;
-    let public = PublicKey::from_secret_key(&secret);
-    Ok((secret, public))
-}
-
-/// Seal a key for future inits
-fn seal_key_data(secret: SecretKey) -> eyre::Result<Vec<u8>> {
-    crate::sealing::seal(
-        Keypolicy::all(),
-        GLOBAL_SECRET_SEAL_LABEL,
-        &secret.serialize(),
-    )
 }
 
 /// Get an attestation for a global or ephemeral public key.

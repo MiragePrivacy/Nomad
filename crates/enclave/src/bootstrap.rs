@@ -18,10 +18,10 @@ pub fn initialize_eoas(stream: &mut TcpStream) -> eyre::Result<(Vec<[u8; 32]>, b
     stream.read_exact(&mut mode)?;
     match mode[0] {
         0 => handle_kyc_eoas(stream),
-        1 => handle_bootstrap_new_eoas(stream),
-        2 => handle_unseal_eoas(stream),
-        3 => handle_unseal_and_maybe_bootstrap(stream),
-        255 => handle_debug_keys(stream),
+        1 => handle_bootstraping_new_eoas(stream),
+        2 => handle_unsealing_eoas(stream),
+        3 => handle_unsealing_and_maybe_bootstraping(stream),
+        255 => handle_debug_eoas(stream),
         _ => bail!("Received invalid EOA mode from userspace"),
     }
 }
@@ -37,18 +37,19 @@ fn handle_kyc_eoas(_stream: &mut TcpStream) -> eyre::Result<(Vec<[u8; 32]>, bool
 }
 
 /// Distribute funds to new eoas from a bootstrap account
-fn handle_bootstrap_new_eoas(_stream: &mut TcpStream) -> eyre::Result<(Vec<[u8; 32]>, bool)> {
+fn handle_bootstraping_new_eoas(_stream: &mut TcpStream) -> eyre::Result<(Vec<[u8; 32]>, bool)> {
     println!("[init] Bootstrapping new EOAs");
     // 1. Read bootstrap account private key
     // 2. OFAC compliance check
-    // 3. Create random distribution of funds to n EOAs
-    // 3. Send network signals to userspace for broadcast
-    // 4. Poll account balances until transfers are completed
+    // 3. Generate and seal n EOAs
+    // 4. Create random distribution of funds to EOAs
+    // 5. Send network signals to userspace for broadcast
+    // 6. Poll account balances until transfers are completed
     unimplemented!()
 }
 
 /// Unseal EOA accounts from previous enclave state
-fn handle_unseal_eoas(stream: &mut TcpStream) -> eyre::Result<(Vec<[u8; 32]>, bool)> {
+fn handle_unsealing_eoas(stream: &mut TcpStream) -> eyre::Result<(Vec<[u8; 32]>, bool)> {
     let mut len = [0u8; 4];
     stream.read_exact(&mut len)?;
     let len = u32::from_be_bytes(len) as usize;
@@ -69,14 +70,14 @@ fn handle_unseal_eoas(stream: &mut TcpStream) -> eyre::Result<(Vec<[u8; 32]>, bo
 
 /// Unseal from enclave state, and also attempt to provision additional funds
 /// to existing EOAs from a bootstrap account
-fn handle_unseal_and_maybe_bootstrap(
+fn handle_unsealing_and_maybe_bootstraping(
     _stream: &mut TcpStream,
 ) -> eyre::Result<(Vec<[u8; 32]>, bool)> {
     unimplemented!()
 }
 
 /// DEBUG ONLY: Use raw keys passed directly on the stream
-fn handle_debug_keys(stream: &mut TcpStream) -> eyre::Result<(Vec<[u8; 32]>, bool)> {
+fn handle_debug_eoas(stream: &mut TcpStream) -> eyre::Result<(Vec<[u8; 32]>, bool)> {
     println!("[init] loading raw keys in debug mode");
     let mut num = [0];
     stream.read_exact(&mut num)?;

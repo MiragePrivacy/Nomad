@@ -53,7 +53,7 @@ impl EthClient {
         todo!()
     }
 
-    /// Try to swap for some eth, ensuring we dont spend more than a minimum amount of tokens
+    /// Try to swap for some eth, ensuring we retain a minimum amount of tokens
     pub fn try_swap(
         &self,
         eoa: usize,
@@ -64,8 +64,15 @@ impl EthClient {
         todo!()
     }
 
-    /// Try to find a suitable redistribution and emit a new signal for transfer
-    pub fn redistribute(&self, _target: usize, _token: Address, _min_tokens: U256) -> Result<()> {
+    /// Create a mirage signal redistributing funds from an EOA to a destination address.
+    /// Used for node runner withdraws and account balance recovery.
+    pub fn redistribute(
+        &self,
+        _source: usize,
+        _target: Address,
+        _token: Address,
+        _amount: U256,
+    ) -> Result<()> {
         todo!()
     }
 }
