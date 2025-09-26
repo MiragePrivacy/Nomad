@@ -31,15 +31,6 @@ sha3 = "0.10.8"
 toml = "0.9"
 zeroize = "1.8"
 
-# SGX DCAP
-
-dcap-ql = "0.4.0"
-sgx_pkix = "0.2.1"
-base16 = "0.2.1"
-der-parser = "10.0.0"
-pem = "3.0.4"
-x509-parser = "0.18.0"
-
 aesm-client = { version = "0.6.0", features = ["sgxs"] }
 enclave-runner = { version = "0.7.2" }
 sgxs-loaders = { version = "0.5.0" }

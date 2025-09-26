@@ -2,7 +2,7 @@ use std::{net::SocketAddrV4, path::PathBuf};
 
 use aesm_client::AesmClient;
 use alloy::primitives::Bytes;
-use eyre::{bail, Context, Result};
+use eyre::{bail, eyre, Context, Result};
 
 use nomad_dcap_quote::SgxQlQveCollateral;
 use nomad_types::{EnclaveMessage, SignalPayload};
@@ -22,7 +22,10 @@ mod quote;
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
 pub struct EnclaveConfig {
-    /// Path to store sealed data in
+    /// Path to enclave sgxs file
+    pub enclave_path: PathBuf,
+    /// Directory path to store sealed data (key.bin, eoa.bin).
+    /// Defaults to nomad config directory.
     pub seal_path: PathBuf,
     /// List of bootstrap nodes to fetch enclave key from.
     /// If empty, assumes this is the first enclave and that
@@ -39,8 +42,10 @@ pub struct EnclaveConfig {
 
 impl Default for EnclaveConfig {
     fn default() -> Self {
+        let config_path: PathBuf = "~/.config/nomad/".into();
         Self {
-            seal_path: "~/.config/nomad/".into(),
+            enclave_path: config_path.join("enclave.sgxs"),
+            seal_path: config_path,
             nodes: vec![],
             debug_keys: vec![],
             bootstrap_keys: vec![],
@@ -55,12 +60,10 @@ pub async fn spawn_enclave(
     mut rx: UnboundedReceiver<SignalPayload>,
     _tx: UnboundedSender<EnclaveMessage>,
 ) -> Result<([u8; 33], bool, Option<(Bytes, SgxQlQveCollateral)>)> {
+    #[cfg(feature = "nosgx")]
+    start_enclave()?;
     #[cfg(not(feature = "nosgx"))]
-    let aesm_client = aesm_client::AesmClient::new();
-
-    info!("Starting enclave ...");
-    // startup enclave in a background thread
-    start_enclave();
+    let aesm_client = start_enclave(&config.enclave_path)?;
 
     // listen for the enclave connection
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", 8888)).await?;
@@ -91,16 +94,39 @@ pub async fn spawn_enclave(
     Ok(response)
 }
 
-fn start_enclave() {
-    #[cfg(feature = "nosgx")]
+#[cfg(not(feature = "nosgx"))]
+fn start_enclave(path: &std::path::Path) -> Result<AesmClient> {
+    use enclave_runner::EnclaveBuilder;
+    use sgxs_loaders::isgx;
+
+    info!("Starting sgx enclave ...");
+
+    let aesm_client = AesmClient::new();
+    let mut device = isgx::Device::new()
+        .unwrap()
+        .einittoken_provider(aesm_client.clone())
+        .build();
+
+    // TODO: fetch enclave and signature if they don't exist.
+    let mut enclave_builder = EnclaveBuilder::new(path);
+
+    // TODO: load MRSIGNER signature
+    enclave_builder.dummy_signature();
+
+    let enclave = enclave_builder
+        .build(&mut device)
+        .map_err(|e| eyre!("Failed to build enclave: {e}"))?;
+    tokio::task::spawn_blocking(|| enclave.run().expect("uh oh, enclave crashed"));
+    Ok(aesm_client)
+}
+
+#[cfg(feature = "nosgx")]
+fn start_enclave() -> Result<()> {
+    info!("Starting mocked enclave ...");
     std::thread::spawn(|| {
         // Run the enclave directly with all sgx operations mocked
         nomad_enclave::main_impl("localhost:8888").expect("uh oh, enclave crashed")
     });
-
-    // TODO: setup enclave runner
-    #[cfg(not(feature = "nosgx"))]
-    unimplemented!("no sgx runner yet");
 }
 
 /// Global key initialization routine
