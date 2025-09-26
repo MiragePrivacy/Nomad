@@ -3,7 +3,6 @@
 use aes_gcm::{aead::Aead, Aes256Gcm, KeyInit};
 use arrayref::array_ref;
 use eyre::bail;
-
 use sgx_isa::Keypolicy;
 use sha2::{Digest, Sha256};
 
@@ -51,7 +50,7 @@ pub struct SealData {
 }
 
 impl SealData {
-    const SIZE: usize = 1 + 32 + 2 + 16;
+    const SIZE: usize = 51;
 
     pub fn new_from_label(policy: Keypolicy, label: &str) -> Self {
         let keyid = Sha256::digest(label).into();

@@ -69,15 +69,15 @@ pub async fn spawn_enclave(
     };
     info!("Enclave connection established");
 
+    init_eoa_keys(config, &mut stream)
+        .await
+        .context("failed to initialize EOA keys")?;
+
     #[cfg(feature = "nosgx")]
     let fut = init_global_key(config, &mut stream);
     #[cfg(not(feature = "nosgx"))]
     let fut = init_global_key(config, &mut stream, &aesm_client);
     let attestation = fut.await.context("failed to initialize global key")?;
-
-    init_eoa_keys(config, &mut stream)
-        .await
-        .context("failed to initialize EOA keys")?;
 
     // Spawn tokio task to send signals into the enclave
     tokio::spawn(async move {
@@ -109,13 +109,6 @@ async fn init_global_key(
     stream: &mut TcpStream,
     #[cfg(not(feature = "nosgx"))] aesm_client: &AesmClient,
 ) -> Result<([u8; 33], Option<(Bytes, SgxQlQveCollateral)>)> {
-    // First setup a quote on a report for an ephemeral atls keychain
-    #[cfg(feature = "nosgx")]
-    let fut = read_report_and_reply_with_quote(stream);
-    #[cfg(not(feature = "nosgx"))]
-    let fut = read_report_and_reply_with_quote(stream, aesm_client);
-    fut.await.context("failed to read report from enclave")?;
-
     let key_path = config.seal_path.join("key.bin");
     let key_path = key_path.resolve();
     if let Ok(data) = std::fs::read(&key_path) {
@@ -127,6 +120,15 @@ async fn init_global_key(
         if !config.nodes.is_empty() {
             // Bootstrap from other node enclaves
             stream.write_u8(1).await?;
+
+            // Enclave will report its client key and read the quote and collateral
+            #[cfg(feature = "nosgx")]
+            let fut = read_report_and_reply_with_quote(stream);
+            #[cfg(not(feature = "nosgx"))]
+            let fut = read_report_and_reply_with_quote(stream, aesm_client);
+            fut.await.context("failed to read report from enclave")?;
+
+            // Send enclave addresses
             stream.write_u8(config.nodes.len() as u8).await?;
             for addr in &config.nodes {
                 stream.write_u32(addr.ip().to_bits()).await?;
@@ -144,6 +146,9 @@ async fn init_global_key(
         tokio::fs::write(key_path, &payload).await?;
     }
 
+    // Now that enclave has the global key, we wait for a report
+    // and quote it, returning the data for adding to the api server.
+    // The enclave will reuse this quote for bootstrapping new enclaves.
     #[cfg(feature = "nosgx")]
     let fut = read_report_and_reply_with_quote(stream);
     #[cfg(not(feature = "nosgx"))]
@@ -161,10 +166,13 @@ async fn read_report_and_reply_with_quote(
 
     #[cfg(feature = "nosgx")]
     {
-        // read 33 byte public key directly
-        if payload.len() != 33 {
-            bail!("unexpected test global public key");
+        // read report data directly
+        if payload.len() != 64 {
+            bail!("unexpected test public key");
         }
+        stream.write_u32(0).await?;
+        stream.write_u32(0).await?;
+
         Ok((*arrayref::array_ref![payload, 0, 33], None))
     }
 

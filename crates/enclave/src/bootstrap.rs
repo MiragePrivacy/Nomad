@@ -11,7 +11,7 @@ const EOA_SEAL_KEY_LABEL: &str = "mirage_eoas";
 ///   - Accepting a bootstrap account and distribution configuration
 ///   - Unsealing existing EOAs
 ///   - DEBUG ONLY: Use raw keys provided
-pub fn initialize_eoas(stream: &mut TcpStream) -> eyre::Result<Vec<[u8; 32]>> {
+pub fn initialize_eoas(stream: &mut TcpStream) -> eyre::Result<(Vec<[u8; 32]>, bool)> {
     let mut mode = [0];
     stream.read_exact(&mut mode)?;
     match mode[0] {
@@ -23,22 +23,24 @@ pub fn initialize_eoas(stream: &mut TcpStream) -> eyre::Result<Vec<[u8; 32]>> {
             // 4. Monitor account balances until balances are filled
             unimplemented!()
         }
-        1 => unseal_eoas(stream),
+        1 => unseal_eoas(stream).map(|v| (v, false)),
         2 => {
             // unseal from enclave state, and also provision additional funds
             // to existing EOAs with a bootstrap account
             unimplemented!()
         }
         255 => {
-            // DEBUG ONLY: Use raw keys passed directly to the stream
+            // DEBUG ONLY: Use raw keys passed directly on the stream
             let mut num = [0];
             stream.read_exact(&mut num)?;
             let mut keys = vec![0; num[0] as usize * 32];
             stream.read_exact(&mut keys)?;
-            Ok(keys
-                .chunks_exact(32)
-                .map(|k| k.try_into().unwrap())
-                .collect())
+            Ok((
+                keys.chunks_exact(32)
+                    .map(|k| k.try_into().unwrap())
+                    .collect(),
+                true,
+            ))
         }
         _ => bail!("Received invalid EOA mode from userspace"),
     }

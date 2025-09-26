@@ -7,33 +7,53 @@ use ecies::{PublicKey, SecretKey};
 use eyre::{bail, Context};
 use sgx_isa::Keypolicy;
 
-const GLOBAL_SECRET_SEAL_LABEL: &str = "mirage_global_secret";
+mod client;
+mod server;
+
+const GLOBAL_SECRET_SEAL_LABEL: &str = "mirage_global_seal_key";
+const GLOBAL_SECRET_KEY_LABEL: &str = "mirage_global_secret";
+const LOCAL_SECRET_KEY_LABEL: &str = "mirage_ephemeral_key";
 
 /// Initialize the global secret by reading the first byte;
 ///   - 0: Generate a new key as the first bootstrap peer
 ///   - 1: Fetching from given bootstrap peers
 ///   - 2: Unseal from previous enclave state
-pub fn initialize_global_secret(stream: &mut TcpStream) -> eyre::Result<(SecretKey, PublicKey)> {
+pub fn initialize_global_secret(
+    stream: &mut TcpStream,
+    is_debug: bool,
+) -> eyre::Result<(SecretKey, PublicKey)> {
     let mut mode = [0];
     stream.read_exact(&mut mode)?;
     match mode[0] {
         // Generate key from scratch
         0 => {
-            let (secret, public) = generate_new_key()?;
-            let sealed_key = seal_key(secret)?;
+            let (secret, public) = derive_enclave_key(GLOBAL_SECRET_KEY_LABEL)?;
+
+            // Write sealed key back to userspace
+            let sealed_key = seal_key_data(secret)?;
             let len = (sealed_key.len() as u32).to_be_bytes();
             stream.write_all(&len)?;
             stream.write_all(&sealed_key)?;
+
             Ok((secret, public))
         }
         // Peer bootstrap
         1 => {
+            // create a client key and generate a (client) attestation for it
+            let (secret, public) = derive_enclave_key(LOCAL_SECRET_KEY_LABEL)?;
+            let (quote, collateral) =
+                crate::generate_attestation_for_key(stream, public, is_debug, false)?;
+
+            // Read peers and fetch the secret from them
             let peers = read_bootstrap_peers(stream)?;
-            let (secret, public) = fetch_global_secret(peers)?;
-            let sealed_key = seal_key(secret)?;
+            let (secret, public) = fetch_global_secret(peers, secret, public, quote, collateral)?;
+
+            // Write sealed key back to userspace
+            let sealed_key = seal_key_data(secret)?;
             let len = (sealed_key.len() as u32).to_be_bytes();
             stream.write_all(&len)?;
             stream.write_all(&sealed_key)?;
+
             Ok((secret, public))
         }
         // Unseal from userspace
@@ -42,9 +62,9 @@ pub fn initialize_global_secret(stream: &mut TcpStream) -> eyre::Result<(SecretK
     }
 }
 
-/// Generate a new global secret key
-fn generate_new_key() -> eyre::Result<(SecretKey, PublicKey)> {
-    let data = crate::sealing::SealData::new_from_label(Keypolicy::all(), "mirage_root_key");
+/// Generate a new secret key
+fn derive_enclave_key(label: &str) -> eyre::Result<(SecretKey, PublicKey)> {
+    let data = crate::sealing::SealData::new_from_label(Keypolicy::all(), label);
     let key = crate::sealing::egetkey(&data)?;
     let secret = SecretKey::parse(&key)?;
     let public = PublicKey::from_secret_key(&secret);
@@ -52,7 +72,7 @@ fn generate_new_key() -> eyre::Result<(SecretKey, PublicKey)> {
 }
 
 /// Seal a key for future inits
-fn seal_key(secret: SecretKey) -> eyre::Result<Vec<u8>> {
+fn seal_key_data(secret: SecretKey) -> eyre::Result<Vec<u8>> {
     crate::sealing::seal(
         Keypolicy::all(),
         GLOBAL_SECRET_SEAL_LABEL,
@@ -85,14 +105,14 @@ fn read_bootstrap_peers(stream: &mut TcpStream) -> eyre::Result<Vec<SocketAddrV4
 }
 
 /// Dial bootstrap peers and exchange the global secret key
-fn fetch_global_secret(_peers: Vec<SocketAddrV4>) -> eyre::Result<(SecretKey, PublicKey)> {
-    // TODO: global secret share flow:
-    //   1. Dial server including self report
-    //   2. Verify server report
-    //   3. Receive key
-    //   4. Seal key for local storage
-    //   5. Send sealed key to userspace
-    unimplemented!()
+fn fetch_global_secret(
+    _peers: Vec<SocketAddrV4>,
+    _secret: SecretKey,
+    _public: PublicKey,
+    _quote: Vec<u8>,
+    _collateral: Vec<u8>,
+) -> eyre::Result<(SecretKey, PublicKey)> {
+    unimplemented!("client.rs")
 }
 
 /// Read encrypted secret data from the stream and decrypt it
