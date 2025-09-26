@@ -4,7 +4,7 @@ use nomad_types::{Signal, SignalPayload};
 
 mod bootstrap;
 mod ethereum;
-mod global;
+mod keyshare;
 mod sealing;
 
 pub fn main() -> eyre::Result<()> {
@@ -27,11 +27,12 @@ pub fn main_impl(addr: &str) -> eyre::Result<()> {
         if is_debug { " debug" } else { "" }
     );
 
+    // Create eth client and prefetch attestated tls certificates
     let eth_client = ethereum::EthClient::new(keys, "todo", "todo".into(), "todo".into())?;
 
     // Fetch, generate, or unseal the global secret
     let (secret, public, _quote, _collateral) =
-        global::initialize_global_secret(&mut stream, is_debug)?;
+        keyshare::initialize_global_secret(&mut stream, is_debug)?;
 
     println!(
         "[init] Global Enclave Key (secp256k1): 0x{}",
@@ -41,7 +42,7 @@ pub fn main_impl(addr: &str) -> eyre::Result<()> {
     // TODO: Setup tcp server with global key and quote, and
     //       distribute the global key to other identical enclaves
 
-    // process incoming signals
+    // Main thread loop
     loop {
         // Read u32 length prefixed signal payload from the stream
         let mut len = [0u8; 4];
@@ -64,6 +65,6 @@ pub fn main_impl(addr: &str) -> eyre::Result<()> {
         let transfer_tx = eth_client.transfer(eoa_2, &signal)?;
         let _collect_tx = eth_client.collect(eoa_1, &signal, transfer_tx)?;
 
-        // TODO: Sign and send acknowledgements
+        // TODO: Sign and send acknowledgement
     }
 }
