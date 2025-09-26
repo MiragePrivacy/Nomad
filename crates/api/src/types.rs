@@ -31,21 +31,22 @@ pub struct RelayGetResponse {
     pub service: String,
 }
 
-#[derive(Serialize, ToSchema)]
-#[serde(tag = "kind")]
+#[derive(Serialize, ToSchema, Clone)]
 #[serde(rename_all = "camelCase")]
-pub enum ReportResponse {
-    Attestation {
-        #[schema(value_type = String)]
-        quote: Bytes,
-        collateral: SgxQlQveCollateral,
-        /// Enclave global key (extracted from quote body's enclave report)
-        #[schema(value_type = String)]
-        key: primitives::FixedBytes<33>,
-    },
-    TestKey {
-        /// Non-sgx node's test key
-        #[schema(value_type = String)]
-        key: primitives::FixedBytes<33>,
-    },
+pub struct AttestResponse {
+    /// SGX Attestation containing a quote and collateral proving the key and debug mode.
+    pub attestation: Option<Attestation>,
+    /// Enclave global key (extracted from quote body's enclave report)
+    #[schema(value_type = String)]
+    pub key: primitives::FixedBytes<33>,
+    /// True if the enclave is running in debug mode
+    pub is_debug: bool,
+}
+
+#[derive(Serialize, ToSchema, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Attestation {
+    #[schema(value_type = String)]
+    pub quote: Bytes,
+    pub collateral: SgxQlQveCollateral,
 }

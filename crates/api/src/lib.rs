@@ -1,4 +1,4 @@
-use std::time::SystemTime;
+use std::{sync::Arc, time::SystemTime};
 
 use axum::{extract::State, http::StatusCode, Json};
 use nomad_dcap_quote::SgxQlQveCollateral;
@@ -14,7 +14,7 @@ use utoipa_scalar::{Scalar, Servable};
 
 pub mod types;
 
-use crate::types::{HealthResponse, ReportResponse};
+use crate::types::{AttestResponse, Attestation, HealthResponse};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
@@ -30,12 +30,16 @@ impl Default for ApiConfig {
 
 #[derive(Clone)]
 pub struct AppState {
-    pub attestation: Option<(Bytes, SgxQlQveCollateral)>,
-    pub publickey: [u8; 33],
-    pub signal_tx: UnboundedSender<SignalPayload>,
+    // health endpoint
     pub start_time: SystemTime,
     pub is_bootstrap: bool,
     pub read_only: bool,
+
+    // attest endpoint
+    pub attestation: Arc<AttestResponse>,
+
+    // signal endpoint
+    pub signal_tx: UnboundedSender<SignalPayload>,
 }
 
 const NOMAD_TAG: &str = "nomad";
@@ -88,25 +92,11 @@ async fn signal(
     tag = NOMAD_TAG,
     responses((
         status = OK,
-        body = ReportResponse,
+        body = AttestResponse,
     ))
 )]
-async fn attest(State(app_state): State<AppState>) -> (StatusCode, Json<ReportResponse>) {
-    (
-        StatusCode::OK,
-        Json(
-            app_state
-                .attestation
-                .map(|attestation| ReportResponse::Attestation {
-                    quote: attestation.0,
-                    collateral: attestation.1,
-                    key: app_state.publickey.into(),
-                })
-                .unwrap_or_else(|| ReportResponse::TestKey {
-                    key: app_state.publickey.into(),
-                }),
-        ),
-    )
+async fn attest(State(app_state): State<AppState>) -> (StatusCode, Json<AttestResponse>) {
+    (StatusCode::OK, Json((*app_state.attestation).clone()))
 }
 
 #[derive(OpenApi)]
@@ -119,9 +109,16 @@ pub async fn spawn_api_server(
     read_only: bool,
     attestation: Option<(Bytes, SgxQlQveCollateral)>,
     publickey: [u8; 33],
+    is_debug: bool,
     signal_tx: UnboundedSender<SignalPayload>,
 ) -> eyre::Result<()> {
     debug!(?config);
+
+    let attestation = Arc::new(AttestResponse {
+        attestation: attestation.map(|(quote, collateral)| Attestation { quote, collateral }),
+        key: publickey.into(),
+        is_debug,
+    });
 
     let (router, api) = OpenApiRouter::with_openapi(ApiDoc::openapi())
         .routes(routes!(health))
@@ -142,12 +139,11 @@ pub async fn spawn_api_server(
                 ]),
         )
         .with_state(AppState {
+            start_time: SystemTime::now(),
             is_bootstrap,
             read_only,
-            publickey,
-            signal_tx,
             attestation,
-            start_time: SystemTime::now(),
+            signal_tx,
         });
 
     let listener = TcpListener::bind(("0.0.0.0", config.port)).await?;

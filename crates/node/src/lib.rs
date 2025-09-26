@@ -35,7 +35,7 @@ impl NomadNode {
         // Spawn enclave
         let (tx, rx) = unbounded_channel();
         let (enclave_tx, _enclave_rx) = unbounded_channel();
-        let (publickey, attestation) =
+        let (publickey, is_debug, attestation) =
             enclave::spawn_enclave(&config.enclave, rx, enclave_tx).await?;
 
         // Spawn api server
@@ -47,6 +47,7 @@ impl NomadNode {
             read_only,
             attestation,
             publickey,
+            is_debug,
             signal_tx,
         )
         .await;

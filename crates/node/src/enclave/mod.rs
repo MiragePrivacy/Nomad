@@ -54,7 +54,7 @@ pub async fn spawn_enclave(
     config: &EnclaveConfig,
     mut rx: UnboundedReceiver<SignalPayload>,
     _tx: UnboundedSender<EnclaveMessage>,
-) -> Result<([u8; 33], Option<(Bytes, SgxQlQveCollateral)>)> {
+) -> Result<([u8; 33], bool, Option<(Bytes, SgxQlQveCollateral)>)> {
     #[cfg(not(feature = "nosgx"))]
     let aesm_client = aesm_client::AesmClient::new();
 
@@ -77,7 +77,7 @@ pub async fn spawn_enclave(
     let fut = init_global_key(config, &mut stream);
     #[cfg(not(feature = "nosgx"))]
     let fut = init_global_key(config, &mut stream, &aesm_client);
-    let attestation = fut.await.context("failed to initialize global key")?;
+    let response = fut.await.context("failed to initialize global key")?;
 
     // Spawn tokio task to send signals into the enclave
     tokio::spawn(async move {
@@ -88,7 +88,7 @@ pub async fn spawn_enclave(
         }
     });
 
-    Ok(attestation)
+    Ok(response)
 }
 
 fn start_enclave() {
@@ -108,7 +108,7 @@ async fn init_global_key(
     config: &EnclaveConfig,
     stream: &mut TcpStream,
     #[cfg(not(feature = "nosgx"))] aesm_client: &AesmClient,
-) -> Result<([u8; 33], Option<(Bytes, SgxQlQveCollateral)>)> {
+) -> Result<([u8; 33], bool, Option<(Bytes, SgxQlQveCollateral)>)> {
     let key_path = config.seal_path.join("key.bin");
     let key_path = key_path.resolve();
     if let Ok(data) = std::fs::read(&key_path) {
@@ -159,7 +159,7 @@ async fn init_global_key(
 async fn read_report_and_reply_with_quote(
     stream: &mut TcpStream,
     #[cfg(not(feature = "nosgx"))] aesm_client: &AesmClient,
-) -> Result<([u8; 33], Option<(Bytes, SgxQlQveCollateral)>)> {
+) -> Result<([u8; 33], bool, Option<(Bytes, SgxQlQveCollateral)>)> {
     let len = stream.read_u32().await? as usize;
     let mut payload = vec![0; len];
     stream.read_exact(&mut payload).await?;
@@ -173,7 +173,11 @@ async fn read_report_and_reply_with_quote(
         stream.write_u32(0).await?;
         stream.write_u32(0).await?;
 
-        Ok((*arrayref::array_ref![payload, 0, 33], None))
+        Ok((
+            *arrayref::array_ref![payload, 0, 33],
+            payload[62] as bool,
+            None,
+        ))
     }
 
     #[cfg(not(feature = "nosgx"))]
@@ -192,7 +196,7 @@ async fn read_report_and_reply_with_quote(
         stream.write_u32(collateral_bytes.len() as u32).await?;
         stream.write_all(&collateral_bytes).await?;
 
-        Ok((key, Some((quote, collateral))))
+        Ok((key, report.reportdata[62] != 0, Some((quote, collateral))))
     }
 }
 
