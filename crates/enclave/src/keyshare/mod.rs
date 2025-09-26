@@ -10,7 +10,7 @@ use sgx_isa::Keypolicy;
 use crate::{keyshare::client::KeyshareClient, sealing::derive_ecies_key};
 
 mod client;
-mod server;
+pub mod server;
 
 /// Label used to derive keyshare client secret
 const LOCAL_SECRET_KEY_LABEL: &str = "mirage_client_secret";
@@ -155,19 +155,19 @@ fn fetch_global_secret(
     quote: Vec<u8>,
     collateral: Vec<u8>,
 ) -> eyre::Result<(SecretKey, PublicKey)> {
-    let client = KeyshareClient::new(secret, quote, collateral)
-        .map_err(|e| eyre::eyre!("failed to create keyshare client: {e}"))?;
-
+    let client = KeyshareClient::new(secret, quote, collateral)?;
     for addr in peers {
         match client.request_key(addr) {
-            // TODO: validate keypair against multiple enclaves
-            Ok(keypair) => return Ok(keypair),
             Err(e) => {
                 eprintln!("[init] Failed to get key from remote enclave: {e}");
             }
+            // TODO: consider getting keypair from multiple enclaves and using the most
+            //       prevelant pair to avoid segmentation or abuse of the bootstrap process
+            Ok(keypair) => return Ok(keypair),
         }
     }
-    bail!("All enclaves failed to provide global key");
+
+    bail!("Failed to get global key from all remote enclaves");
 }
 
 /// Read encrypted secret data from the stream and decrypt it
@@ -183,4 +183,21 @@ fn read_and_unseal_global_secret(stream: &mut TcpStream) -> eyre::Result<(Secret
     let secret = SecretKey::parse_slice(&secret)?;
     let public = PublicKey::from_secret_key(&secret);
     Ok((secret, public))
+}
+
+/// Spawn a keyshare server in a background thread
+pub fn spawn_keyshare_server(
+    port: u16,
+    secret: SecretKey,
+    quote: Vec<u8>,
+    collateral: Vec<u8>,
+) -> eyre::Result<()> {
+    let server = server::KeyshareServer::new(
+        SocketAddrV4::new([0, 0, 0, 0].into(), port),
+        secret,
+        quote,
+        collateral,
+    )?;
+    std::thread::spawn(|| server.run().expect("keyshare server failed"));
+    Ok(())
 }

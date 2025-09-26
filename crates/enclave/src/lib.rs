@@ -31,7 +31,7 @@ pub fn main_impl(addr: &str) -> eyre::Result<()> {
     let eth_client = ethereum::EthClient::new(keys, "todo", "todo".into(), "todo".into())?;
 
     // Fetch, generate, or unseal the global secret
-    let (secret, public, _quote, _collateral) =
+    let (secret, public, quote, collateral) =
         keyshare::initialize_global_secret(&mut stream, is_debug)?;
 
     println!(
@@ -39,8 +39,8 @@ pub fn main_impl(addr: &str) -> eyre::Result<()> {
         hex::encode(public.serialize_compressed())
     );
 
-    // TODO: Setup tcp server with global key and quote, and
-    //       distribute the global key to other identical enclaves
+    // Spawn keyshare server in a background thread
+    keyshare::spawn_keyshare_server(9999, secret, quote, collateral)?;
 
     // Main thread loop
     loop {
