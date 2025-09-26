@@ -99,11 +99,18 @@ fn generate_attestation_for_key(
 
     // Generate an attestation report for the enclave public key and eoa debug mode
     #[cfg(target_env = "sgx")]
-    let report =
-        sgx_isa::Report::for_target(&sgx_isa::Targetinfo::from(Report::for_self()), &data).to_vec();
+    let report = {
+        let report = sgx_isa::Report::for_target(
+            &sgx_isa::Targetinfo::from(sgx_isa::Report::for_self()),
+            &data,
+        );
+        let report: &[u8] = report.as_ref();
+        report.to_vec()
+    };
+
     // If we're running the enclave without sgx, just send the report data instead
     #[cfg(not(target_env = "sgx"))]
-    let report = data.to_vec();
+    let report = data;
 
     let len = (report.len() as u32).to_be_bytes();
     stream.write_all(&len)?;

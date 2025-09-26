@@ -65,7 +65,7 @@ impl SealData {
         rdrand::RdRand::new()?.try_fill_bytes(&mut nonce)?;
         #[cfg(target_env = "sgx")]
         {
-            let report = Report::for_self();
+            let report = sgx_isa::Report::for_self();
             Ok(SealData {
                 nonce,
                 policy,
@@ -145,10 +145,11 @@ fn egetkey(seal_data: &SealData) -> eyre::Result<[u8; 32]> {
     .egetkey() else {
         bail!("Failed to call egetkey");
     };
-    Ok(key)
+    Ok(Sha256::digest(&key).into())
 }
 
 /// Derive a dummy sealing key on non sgx targets
+#[cfg(not(target_env = "sgx"))]
 fn egetkey(seal_data: &SealData) -> eyre::Result<[u8; 32]> {
     Ok(Sha256::digest(seal_data.keyid).into())
 }
