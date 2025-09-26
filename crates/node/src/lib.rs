@@ -15,7 +15,6 @@ use nomad_pool::SignalPool;
 
 pub mod config;
 mod enclave;
-mod execute;
 
 tracer_name!("nomad");
 
