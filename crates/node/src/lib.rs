@@ -28,14 +28,15 @@ pub struct NomadNode {
 }
 
 impl NomadNode {
-    /// Initialize the node with p2p, an eth client, and a vm worker thread
+    /// Initialize the node
     pub async fn init(config: config::Config) -> Result<Self> {
         let read_only = config.enclave.num_accounts < 2;
 
         // Spawn enclave
         let (tx, rx) = unbounded_channel();
         let (enclave_tx, _enclave_rx) = unbounded_channel();
-        let _report = enclave::spawn_enclave(&config.enclave, rx, enclave_tx).await?;
+        let (publickey, attestation) =
+            enclave::spawn_enclave(&config.enclave, rx, enclave_tx).await?;
 
         // Spawn api server
         // TODO: add attestation endpoint with report and enclave public key
@@ -44,6 +45,8 @@ impl NomadNode {
             config.api,
             config.p2p.bootstrap.is_empty(),
             read_only,
+            attestation,
+            publickey,
             signal_tx,
         )
         .await;

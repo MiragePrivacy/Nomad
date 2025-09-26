@@ -1,7 +1,6 @@
 use std::{
     io::{Read, Write},
     net::TcpStream,
-    sync::mpsc::SyncSender,
 };
 
 use ecies::PublicKey;
@@ -12,14 +11,15 @@ mod global;
 mod sealing;
 
 pub fn main() -> eyre::Result<()> {
-    let addr = std::env::args()
-        .next()
-        .expect("failed to read control socket arg");
-    main_impl(TcpStream::connect(addr)?)
+    main_impl(
+        &std::env::args()
+            .next()
+            .expect("failed to read control socket arg"),
+    )
 }
 
-pub fn main_impl(mut stream: TcpStream) -> eyre::Result<()> {
-    let (tx, rx) = std::sync::mpsc::sync_channel(256);
+pub fn main_impl(addr: &str) -> eyre::Result<()> {
+    let mut stream = TcpStream::connect(addr)?;
 
     // fetch, generate, or unseal the global secret
     let (secret, public) = global::initialize_global_secret(&mut stream)?;
@@ -37,44 +37,7 @@ pub fn main_impl(mut stream: TcpStream) -> eyre::Result<()> {
     // bootstrap and/or unseal node eoa accounts
     let _accounts = bootstrap::initialize_eoas(&mut stream)?;
 
-    // spawn read thread for processing incoming signals
-    let reader = stream.try_clone()?;
-    std::thread::spawn(|| read_signals(reader, tx).expect("read thread failed"));
-
     // process incoming signals
-    loop {
-        let signal = rx.recv()?;
-        let Ok(bytes) = ecies::decrypt(&secret.serialize(), &signal.0) else {
-            continue;
-        };
-        let _signal: Signal = serde_json::from_slice(&bytes)?;
-
-        todo!("execute signal");
-    }
-}
-
-#[cfg(target_env = "sgx")]
-fn report_for_key(publickey: PublicKey) -> Vec<u8> {
-    // Generate an attestation report for the global public key
-    let mut data = [u8; 64];
-    data[0..33].copy_from_slice(publickey.serialize_compressed());
-    let targetinfo = sgx_isa::Targetinfo::from(Report::for_self());
-    sgx_isa::Report::for_target(&targetinfo, &data)
-}
-
-#[cfg(not(target_env = "sgx"))]
-fn report_for_key(publickey: PublicKey) -> Vec<u8> {
-    // If we're running the enclave without sgx, just send the raw public key
-    publickey.serialize_compressed().to_vec()
-}
-
-/// Read signals from the stream and send them to the main thread for processing.
-///
-/// Encoding:
-/// ```text
-/// [ u32 len . bytes(json(signalpayload)) ]
-/// ```
-fn read_signals(mut stream: TcpStream, tx: SyncSender<SignalPayload>) -> eyre::Result<()> {
     loop {
         // Read u32 length prefixed signal payload from the stream
         let mut len = [0u8; 4];
@@ -84,7 +47,29 @@ fn read_signals(mut stream: TcpStream, tx: SyncSender<SignalPayload>) -> eyre::R
         let mut payload = vec![0u8; len];
         stream.read_exact(&mut payload)?;
 
+        // Decrypt signal
         let signal: SignalPayload = serde_json::from_slice(&payload)?;
-        tx.send(signal)?;
+        let Ok(bytes) = ecies::decrypt(&secret.serialize(), &signal.0) else {
+            continue;
+        };
+        let signal: Signal = serde_json::from_slice(&bytes)?;
+
+        todo!("execute {signal}");
     }
+}
+
+fn report_for_key(publickey: PublicKey) -> Vec<u8> {
+    #[cfg(target_env = "sgx")]
+    {
+        // Generate an attestation report for the global public key and eoa debug mode
+        let mut data = [u8; 64];
+        data[0..33].copy_from_slice(publickey.serialize_compressed());
+        data[63] = debug as u8;
+        let targetinfo = sgx_isa::Targetinfo::from(Report::for_self());
+        sgx_isa::Report::for_target(&targetinfo, &data).to_vec()
+    }
+
+    #[cfg(not(target_env = "sgx"))]
+    // If we're running the enclave without sgx, just send the raw public key
+    publickey.serialize_compressed().to_vec()
 }

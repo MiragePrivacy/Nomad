@@ -1,19 +1,20 @@
 use std::time::SystemTime;
 
 use axum::{extract::State, http::StatusCode, Json};
+use nomad_dcap_quote::SgxQlQveCollateral;
 use serde::{Deserialize, Serialize};
 use tokio::{net::TcpListener, sync::mpsc::UnboundedSender};
 use tower_http::cors::{self, CorsLayer};
 use tracing::{debug, info};
 
-use nomad_types::SignalPayload;
+use nomad_types::{primitives::Bytes, SignalPayload};
 use utoipa::OpenApi;
 use utoipa_axum::{router::OpenApiRouter, routes};
 use utoipa_scalar::{Scalar, Servable};
 
 pub mod types;
 
-use crate::types::HealthResponse;
+use crate::types::{HealthResponse, ReportResponse};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
@@ -29,14 +30,19 @@ impl Default for ApiConfig {
 
 #[derive(Clone)]
 pub struct AppState {
+    pub attestation: Option<(Bytes, SgxQlQveCollateral)>,
+    pub publickey: [u8; 33],
     pub signal_tx: UnboundedSender<SignalPayload>,
     pub start_time: SystemTime,
     pub is_bootstrap: bool,
     pub read_only: bool,
 }
 
+const NOMAD_TAG: &str = "nomad";
+
+/// Node Status
 #[utoipa::path(
-    get, path = "/health",
+    get, path = "/", tag = NOMAD_TAG,
     responses((status = OK, body = HealthResponse))
 )]
 async fn health(State(app_state): State<AppState>) -> Json<HealthResponse> {
@@ -51,8 +57,10 @@ async fn health(State(app_state): State<AppState>) -> Json<HealthResponse> {
     })
 }
 
+/// Submit Signals
 #[utoipa::path(
     post, path = "/signal",
+    tag = NOMAD_TAG,
     request_body = SignalPayload,
     responses(
         (status = OK, body = str, description = "Signal acknowledged"),
@@ -74,20 +82,51 @@ async fn signal(
     }
 }
 
+/// Enclave Attestation
+#[utoipa::path(
+    get, path = "/attest",
+    tag = NOMAD_TAG,
+    responses((
+        status = OK,
+        body = ReportResponse,
+    ))
+)]
+async fn attest(State(app_state): State<AppState>) -> (StatusCode, Json<ReportResponse>) {
+    (
+        StatusCode::OK,
+        Json(
+            app_state
+                .attestation
+                .map(|attestation| ReportResponse::Attestation {
+                    quote: attestation.0,
+                    collateral: attestation.1,
+                    key: app_state.publickey.into(),
+                })
+                .unwrap_or_else(|| ReportResponse::TestKey {
+                    key: app_state.publickey.into(),
+                }),
+        ),
+    )
+}
+
 #[derive(OpenApi)]
-#[openapi()]
+#[openapi(tags((name = NOMAD_TAG, description = "Nomad node api")))]
 struct ApiDoc;
 
 pub async fn spawn_api_server(
     config: ApiConfig,
     is_bootstrap: bool,
     read_only: bool,
+    attestation: Option<(Bytes, SgxQlQveCollateral)>,
+    publickey: [u8; 33],
     signal_tx: UnboundedSender<SignalPayload>,
 ) -> eyre::Result<()> {
     debug!(?config);
 
     let (router, api) = OpenApiRouter::with_openapi(ApiDoc::openapi())
-        .routes(routes!(health, signal))
+        .routes(routes!(health))
+        .routes(routes!(signal))
+        .routes(routes!(attest))
         .split_for_parts();
 
     let app = router
@@ -105,7 +144,9 @@ pub async fn spawn_api_server(
         .with_state(AppState {
             is_bootstrap,
             read_only,
+            publickey,
             signal_tx,
+            attestation,
             start_time: SystemTime::now(),
         });
 

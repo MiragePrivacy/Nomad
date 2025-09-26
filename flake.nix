@@ -20,6 +20,7 @@
           rustup
           openssl
           pkgconf
+          protobuf
 
           # Development
           foundry

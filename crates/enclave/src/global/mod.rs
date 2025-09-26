@@ -4,7 +4,7 @@ use std::{
 };
 
 use ecies::{PublicKey, SecretKey};
-use eyre::bail;
+use eyre::{bail, Context};
 use sgx_isa::Keypolicy;
 
 const GLOBAL_SECRET_SEAL_LABEL: &str = "mirage_global_secret";
@@ -103,7 +103,8 @@ fn read_and_unseal_global_secret(stream: &mut TcpStream) -> eyre::Result<(Secret
     let mut payload = vec![0; u32::from_be_bytes(len) as usize];
     stream.read_exact(&mut payload)?;
 
-    let secret = crate::sealing::unseal(Keypolicy::all(), GLOBAL_SECRET_SEAL_LABEL, &payload)?;
+    let secret = crate::sealing::unseal(Keypolicy::all(), GLOBAL_SECRET_SEAL_LABEL, &payload)
+        .context("failed to unseal global secret")?;
     let secret = SecretKey::parse_slice(&secret)?;
     let public = PublicKey::from_secret_key(&secret);
     Ok((secret, public))

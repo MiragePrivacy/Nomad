@@ -88,8 +88,8 @@ impl SealData {
     }
 
     fn from_slice(policy: Keypolicy, label: &str, slice: &[u8]) -> eyre::Result<Self> {
-        if slice.len() != Self::SIZE {
-            bail!("Invalid seal data");
+        if slice.len() < Self::SIZE {
+            bail!("Invalid seal data length");
         }
 
         match slice[0] {

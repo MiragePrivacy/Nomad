@@ -1,3 +1,5 @@
+use nomad_dcap_quote::SgxQlQveCollateral;
+use nomad_types::primitives::{self, Bytes};
 use serde::{Deserialize, Serialize};
 
 use utoipa::ToSchema;
@@ -5,7 +7,7 @@ use utoipa::ToSchema;
 /// Node health report
 #[derive(Serialize, Deserialize, ToSchema)]
 pub struct HealthResponse {
-    #[schema(example = "healty")]
+    #[schema(example = "healthy")]
     pub status: String,
     /// Node version
     #[schema(example = "0.1.0")]
@@ -27,4 +29,23 @@ pub struct HealthResponse {
 pub struct RelayGetResponse {
     pub status: String,
     pub service: String,
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(tag = "kind")]
+#[serde(rename_all = "camelCase")]
+pub enum ReportResponse {
+    Attestation {
+        #[schema(value_type = String)]
+        quote: Bytes,
+        collateral: SgxQlQveCollateral,
+        /// Enclave global key (extracted from quote body's enclave report)
+        #[schema(value_type = String)]
+        key: primitives::FixedBytes<33>,
+    },
+    TestKey {
+        /// Non-sgx node's test key
+        #[schema(value_type = String)]
+        key: primitives::FixedBytes<33>,
+    },
 }
