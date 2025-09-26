@@ -5,7 +5,6 @@ edition = "2021"
 
 [dependencies]
 nomad-types = { path = "../types" }
-nomad-pool = { path = "../pool" }
 
 eyre.workspace = true
 serde.workspace = true
@@ -24,7 +23,7 @@ libsecp256k1  = "=0.7.2"
 # Sealing data
 aes-gcm = "=0.10.3"
 
-# Signal decryption
+# Signal encryption and global keyshare
 [dependencies.ecies]
 # Notes about cryptography dependencies:
 #   - `aes-gcm`: pure rust, has been audited

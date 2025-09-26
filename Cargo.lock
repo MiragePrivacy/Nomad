@@ -4195,7 +4195,6 @@ dependencies = [
  "eyre",
  "hex",
  "libsecp256k1",
- "nomad-pool",
  "nomad-types",
  "rdrand",
  "serde",
