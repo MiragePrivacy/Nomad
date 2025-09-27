@@ -1,10 +1,10 @@
 use std::sync::{atomic::AtomicBool, Arc};
 
 use alloy::signers::local::PrivateKeySigner;
-use eyre::Result;
+use eyre::{ContextCompat, Result};
 use opentelemetry::{global::meter_provider, metrics::Counter};
 use otel_instrument::tracer_name;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tracing::warn;
 
 use nomad_api::spawn_api_server;
@@ -20,7 +20,11 @@ mod enclave;
 tracer_name!("nomad");
 
 pub struct NomadNode {
+    // Channel to send requests to stream worker
     tx: UnboundedSender<EnclaveRequest>,
+    // Channel to read responses from stream worker
+    rx: UnboundedReceiver<Vec<u8>>,
+    keyshare_rx: UnboundedReceiver<(Vec<u8>, UnboundedSender<Vec<u8>>)>,
     signal_pool: SignalPool,
     eth_client: EthClient,
     _success: Counter<u64>,
@@ -34,12 +38,14 @@ impl NomadNode {
 
         // Spawn enclave
         let (tx, rx) = unbounded_channel();
+        let (res_tx, res_rx) = unbounded_channel();
         let (publickey, is_debug, attestation) =
-            enclave::spawn_enclave(&config.enclave, rx).await?;
+            enclave::spawn_enclave(&config.enclave, rx, res_tx).await?;
 
         // Spawn api server
         // TODO: add attestation endpoint with report and enclave public key
         let (signal_tx, signal_rx) = unbounded_channel();
+        let (keyshare_tx, keyshare_rx) = unbounded_channel();
         let _ = spawn_api_server(
             config.api,
             config.p2p.bootstrap.is_empty(),
@@ -48,6 +54,7 @@ impl NomadNode {
             publickey,
             is_debug,
             signal_tx,
+            keyshare_tx,
         )
         .await;
 
@@ -81,6 +88,8 @@ impl NomadNode {
 
         Ok(Self {
             tx,
+            rx: res_rx,
+            keyshare_rx,
             signal_pool,
             eth_client,
             _success: success,
@@ -89,7 +98,7 @@ impl NomadNode {
     }
 
     /// Run the node
-    pub async fn run(self) -> Result<()> {
+    pub async fn run(mut self) -> Result<()> {
         // Spawn background balance monitoring task if Uniswap is enabled
         if let Some(check_interval) = self.eth_client.swap_check_interval() {
             let eth_client_clone = self.eth_client.clone();
@@ -123,9 +132,21 @@ impl NomadNode {
     }
 
     /// Handle the next signal from the pool (blocking until one is available)
-    pub async fn next(&self) -> Result<()> {
-        let signal = self.signal_pool.sample().await;
-        self.tx.send(EnclaveRequest::Signal(signal.0))?;
+    pub async fn next(&mut self) -> Result<()> {
+        tokio::select! {
+            signal = self.signal_pool.sample() => {
+                self.tx.send(EnclaveRequest::Signal(signal.0))?;
+                self.rx.recv().await;
+            }
+            keyshare = self.keyshare_rx.recv() => {
+                let (request, tx) = keyshare.context("Keyshare channel dropped")?;
+                self.tx.send(EnclaveRequest::Keyshare(request.into()))?;
+                // read response payload from stream and send back to the caller
+                if let Some(response) = self.rx.recv().await {
+                    tx.send(response)?;
+                }
+            }
+        }
         Ok(())
     }
 }

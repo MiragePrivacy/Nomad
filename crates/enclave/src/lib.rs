@@ -1,4 +1,7 @@
-use std::{io::Read, net::TcpStream};
+use std::{
+    io::{Read, Write},
+    net::TcpStream,
+};
 
 use ecies::SecretKey;
 use eyre::bail;
@@ -81,17 +84,23 @@ impl Enclave {
         // Decrypt signal
         let signal: SignalPayload = serde_json::from_slice(&payload)?;
         let Ok(bytes) = ecies::decrypt(&self.secret.serialize(), &signal.0) else {
+            self.stream.write_all(&0u32.to_be_bytes())?;
             return Ok(());
         };
-        let signal: Signal = serde_json::from_slice(&bytes)?;
+        let Ok(signal) = serde_json::from_slice::<Signal>(&bytes) else {
+            self.stream.write_all(&0u32.to_be_bytes())?;
+            return Ok(());
+        };
 
         // Execute signal
         let [eoa_1, eoa_2] = self.eth_client.select_accounts(&signal)?;
         let [_approve_tx, _bond_tx] = self.eth_client.bond(eoa_1, &signal)?;
         let transfer_tx = self.eth_client.transfer(eoa_2, &signal)?;
         let _collect_tx = self.eth_client.collect(eoa_1, &signal, transfer_tx)?;
+        self.stream.write_all(&0u32.to_be_bytes())?;
 
         // TODO: Sign and send acknowledgement
+
         Ok(())
     }
 }
