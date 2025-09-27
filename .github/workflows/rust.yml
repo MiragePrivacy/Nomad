@@ -30,7 +30,9 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - uses: Swatinem/rust-cache@v2
-    - run: cargo clippy -- -Dwarnings
+    - run: |
+      cargo clippy -- -Dwarnings
+      cargo +nightly clippy --target x86_64-fortanix-unknown-sgx -p nomad-enclave
 
   test:
     runs-on: ubuntu-latest
@@ -45,4 +47,6 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - uses: Swatinem/rust-cache@v2
-    - run: cargo build --release
+    - run: |
+      cargo build --release
+      cargo +nightly clippy --target x86_64-fortanix-unknown-sgx -p nomad-enclave
