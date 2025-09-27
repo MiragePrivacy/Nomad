@@ -2,7 +2,6 @@ use std::sync::{atomic::AtomicBool, Arc};
 
 use alloy::signers::local::PrivateKeySigner;
 use eyre::Result;
-use nomad_types::SignalPayload;
 use opentelemetry::{global::meter_provider, metrics::Counter};
 use otel_instrument::tracer_name;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
@@ -13,13 +12,15 @@ use nomad_ethereum::EthClient;
 use nomad_p2p::P2pNode;
 use nomad_pool::SignalPool;
 
+use crate::enclave::EnclaveRequest;
+
 pub mod config;
 mod enclave;
 
 tracer_name!("nomad");
 
 pub struct NomadNode {
-    tx: UnboundedSender<SignalPayload>,
+    tx: UnboundedSender<EnclaveRequest>,
     signal_pool: SignalPool,
     eth_client: EthClient,
     _success: Counter<u64>,
@@ -33,9 +34,8 @@ impl NomadNode {
 
         // Spawn enclave
         let (tx, rx) = unbounded_channel();
-        let (enclave_tx, _enclave_rx) = unbounded_channel();
         let (publickey, is_debug, attestation) =
-            enclave::spawn_enclave(&config.enclave, rx, enclave_tx).await?;
+            enclave::spawn_enclave(&config.enclave, rx).await?;
 
         // Spawn api server
         // TODO: add attestation endpoint with report and enclave public key
@@ -125,7 +125,7 @@ impl NomadNode {
     /// Handle the next signal from the pool (blocking until one is available)
     pub async fn next(&self) -> Result<()> {
         let signal = self.signal_pool.sample().await;
-        self.tx.send(signal)?;
+        self.tx.send(EnclaveRequest::Signal(signal.0))?;
         Ok(())
     }
 }

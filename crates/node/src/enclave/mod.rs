@@ -5,14 +5,13 @@ use alloy::primitives::Bytes;
 use eyre::{bail, eyre, Context, Result};
 
 use nomad_dcap_quote::SgxQlQveCollateral;
-use nomad_types::{EnclaveMessage, SignalPayload};
 use resolve_path::PathResolveExt;
 use serde::{Deserialize, Serialize};
 use sgx_isa::Report;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
-    sync::mpsc::{UnboundedReceiver, UnboundedSender},
+    sync::mpsc::UnboundedReceiver,
 };
 use tracing::info;
 
@@ -54,11 +53,35 @@ impl Default for EnclaveConfig {
     }
 }
 
+#[allow(unused)]
+pub enum EnclaveRequest {
+    Signal(Bytes),
+    Keyshare(Bytes),
+    Withdraw(),
+}
+
+impl EnclaveRequest {
+    pub fn to_vec(&self) -> Vec<u8> {
+        let mut buf = vec![match self {
+            EnclaveRequest::Keyshare(_) => 0,
+            EnclaveRequest::Signal(_) => 1,
+            EnclaveRequest::Withdraw() => 2,
+        }];
+        match self {
+            EnclaveRequest::Signal(bytes) | EnclaveRequest::Keyshare(bytes) => {
+                buf.extend_from_slice(&(bytes.len() as u32).to_be_bytes());
+                buf.extend_from_slice(bytes);
+            }
+            _ => {}
+        }
+        buf
+    }
+}
+
 /// Spawn the enclave, returning the attestation report for the global public key
 pub async fn spawn_enclave(
     config: &EnclaveConfig,
-    mut rx: UnboundedReceiver<SignalPayload>,
-    _tx: UnboundedSender<EnclaveMessage>,
+    mut rx: UnboundedReceiver<EnclaveRequest>,
 ) -> Result<([u8; 33], bool, Option<(Bytes, SgxQlQveCollateral)>)> {
     #[cfg(feature = "nosgx")]
     start_enclave()?;
@@ -82,18 +105,18 @@ pub async fn spawn_enclave(
     let fut = init_global_key(config, &mut stream, &aesm_client);
     let response = fut.await.context("failed to initialize global key")?;
 
-    // Spawn tokio task to send signals into the enclave
+    // Spawn tokio task to send requests into the enclave
     tokio::spawn(async move {
         loop {
-            let signal = rx.recv().await.expect("signal channel closed");
-            stream.write_u32(signal.0.len() as u32).await.unwrap();
-            stream.write_all(&signal.0).await.unwrap();
+            let request = rx.recv().await.expect("signal channel closed");
+            stream.write_all(&request.to_vec()).await.unwrap();
         }
     });
 
     Ok(response)
 }
 
+/// Run the real sgx enclave
 #[cfg(not(feature = "nosgx"))]
 fn start_enclave(path: &std::path::Path) -> Result<AesmClient> {
     use enclave_runner::EnclaveBuilder;
@@ -120,12 +143,14 @@ fn start_enclave(path: &std::path::Path) -> Result<AesmClient> {
     Ok(aesm_client)
 }
 
+/// Run the enclave directly with all sgx operations mocked
 #[cfg(feature = "nosgx")]
 fn start_enclave() -> Result<()> {
     info!("Starting mocked enclave ...");
-    std::thread::spawn(|| {
-        // Run the enclave directly with all sgx operations mocked
-        nomad_enclave::main_impl("localhost:8888").expect("uh oh, enclave crashed")
+    tokio::task::spawn_blocking(|| {
+        nomad_enclave::Enclave::new("localhost:8888")
+            .run()
+            .expect("uh oh, enclave crashed")
     });
 }
 

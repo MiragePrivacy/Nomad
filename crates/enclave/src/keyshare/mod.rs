@@ -7,10 +7,12 @@ use ecies::{PublicKey, SecretKey};
 use eyre::{bail, Context};
 use sgx_isa::Keypolicy;
 
-use crate::{keyshare::client::KeyshareClient, sealing::derive_ecies_key};
+use crate::sealing::derive_ecies_key;
+use client::KeyshareClient;
+pub use server::KeyshareServer;
 
 mod client;
-pub mod server;
+mod server;
 
 /// Label used to derive keyshare client secret
 const LOCAL_SECRET_KEY_LABEL: &str = "mirage_client_secret";
@@ -190,21 +192,4 @@ fn read_and_unseal_global_secret(stream: &mut TcpStream) -> eyre::Result<(Secret
     let secret = SecretKey::parse_slice(&secret)?;
     let public = PublicKey::from_secret_key(&secret);
     Ok((secret, public))
-}
-
-/// Spawn a keyshare server in a background thread
-pub fn spawn_keyshare_server(
-    port: u16,
-    secret: SecretKey,
-    quote: Vec<u8>,
-    collateral: Vec<u8>,
-) -> eyre::Result<()> {
-    let server = server::KeyshareServer::new(
-        SocketAddrV4::new([0, 0, 0, 0].into(), port),
-        secret,
-        quote,
-        collateral,
-    )?;
-    std::thread::spawn(|| server.run().expect("keyshare server failed"));
-    Ok(())
 }
