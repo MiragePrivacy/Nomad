@@ -1,9 +1,12 @@
 use std::{sync::Arc, time::SystemTime};
 
-use axum::{extract::State, http::StatusCode, Json};
+use axum::{body::Body, extract::State, http::StatusCode, Json};
 use nomad_dcap_quote::SgxQlQveCollateral;
 use serde::{Deserialize, Serialize};
-use tokio::{net::TcpListener, sync::mpsc::UnboundedSender};
+use tokio::{
+    net::TcpListener,
+    sync::mpsc::{unbounded_channel, UnboundedSender},
+};
 use tower_http::cors::{self, CorsLayer};
 use tracing::{debug, info};
 
@@ -40,6 +43,9 @@ pub struct AppState {
 
     // signal endpoint
     pub signal_tx: UnboundedSender<SignalPayload>,
+
+    // keyshare endpoint
+    pub keyshare_tx: UnboundedSender<(Vec<u8>, UnboundedSender<Vec<u8>>)>,
 }
 
 const NOMAD_TAG: &str = "nomad";
@@ -59,6 +65,57 @@ async fn health(State(app_state): State<AppState>) -> Json<HealthResponse> {
         is_bootstrap: app_state.is_bootstrap,
         read_only: app_state.read_only,
     })
+}
+
+/// Enclave Attestation
+#[utoipa::path(
+    get, path = "/attest",
+    tag = NOMAD_TAG,
+    responses((
+        status = OK,
+        body = AttestResponse,
+    ))
+)]
+async fn attest(State(app_state): State<AppState>) -> (StatusCode, Json<AttestResponse>) {
+    (StatusCode::OK, Json((*app_state.attestation).clone()))
+}
+
+#[utoipa::path(
+    post, path = "/key",
+    tag = NOMAD_TAG,
+    request_body = Vec<u8>,
+    responses(
+        (status = OK, body = Vec<u8>, description = "Encrypted global key"),
+        (status = BAD_REQUEST, body = str, description = "Invalid client enclave attestation"),
+        (status = INTERNAL_SERVER_ERROR, body = str, description = "Failed to send request to enclave")
+    )
+)]
+async fn keyshare(State(app_state): State<AppState>, body: Body) -> (StatusCode, Vec<u8>) {
+    let Ok(request) = axum::body::to_bytes(body, 1024 * 1024).await else {
+        return (
+            StatusCode::BAD_REQUEST,
+            b"Failed to read request payload".to_vec(),
+        );
+    };
+
+    // TODO: validate client attestation ahead of time to avoid wasting enclave resources
+
+    let (tx, mut rx) = unbounded_channel();
+    if app_state.keyshare_tx.send((request.into(), tx)).is_err() {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            b"Failed to send request to enclave".to_vec(),
+        );
+    }
+
+    // Read response from enclave
+    match rx.recv().await {
+        Some(response) => (StatusCode::OK, response),
+        None => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            b"Failed to get keyshare response from enclave".to_vec(),
+        ),
+    }
 }
 
 /// Submit Signals
@@ -86,23 +143,11 @@ async fn signal(
     }
 }
 
-/// Enclave Attestation
-#[utoipa::path(
-    get, path = "/attest",
-    tag = NOMAD_TAG,
-    responses((
-        status = OK,
-        body = AttestResponse,
-    ))
-)]
-async fn attest(State(app_state): State<AppState>) -> (StatusCode, Json<AttestResponse>) {
-    (StatusCode::OK, Json((*app_state.attestation).clone()))
-}
-
 #[derive(OpenApi)]
 #[openapi(tags((name = NOMAD_TAG, description = "Nomad node api")))]
 struct ApiDoc;
 
+#[allow(clippy::too_many_arguments)]
 pub async fn spawn_api_server(
     config: ApiConfig,
     is_bootstrap: bool,
@@ -111,6 +156,7 @@ pub async fn spawn_api_server(
     publickey: [u8; 33],
     is_debug: bool,
     signal_tx: UnboundedSender<SignalPayload>,
+    keyshare_tx: UnboundedSender<(Vec<u8>, UnboundedSender<Vec<u8>>)>,
 ) -> eyre::Result<()> {
     debug!(?config);
 
@@ -123,8 +169,9 @@ pub async fn spawn_api_server(
 
     let (router, api) = OpenApiRouter::with_openapi(ApiDoc::openapi())
         .routes(routes!(health))
-        .routes(routes!(signal))
         .routes(routes!(attest))
+        .routes(routes!(keyshare))
+        .routes(routes!(signal))
         .split_for_parts();
 
     let app = router
@@ -145,6 +192,7 @@ pub async fn spawn_api_server(
             read_only,
             attestation,
             signal_tx,
+            keyshare_tx,
         });
 
     let listener = TcpListener::bind(("0.0.0.0", config.port)).await?;

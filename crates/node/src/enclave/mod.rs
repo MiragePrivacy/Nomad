@@ -11,7 +11,7 @@ use sgx_isa::Report;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
-    sync::mpsc::UnboundedReceiver,
+    sync::mpsc::{UnboundedReceiver, UnboundedSender},
 };
 use tracing::info;
 
@@ -82,6 +82,7 @@ impl EnclaveRequest {
 pub async fn spawn_enclave(
     config: &EnclaveConfig,
     mut rx: UnboundedReceiver<EnclaveRequest>,
+    tx: UnboundedSender<Vec<u8>>,
 ) -> Result<([u8; 33], bool, Option<(Bytes, SgxQlQveCollateral)>)> {
     #[cfg(feature = "nosgx")]
     start_enclave()?;
@@ -110,6 +111,16 @@ pub async fn spawn_enclave(
         loop {
             let request = rx.recv().await.expect("signal channel closed");
             stream.write_all(&request.to_vec()).await.unwrap();
+            let len = stream
+                .read_u32()
+                .await
+                .expect("failed to read response length delimiter") as usize;
+            let mut buf = vec![0; len];
+            stream
+                .read_exact(&mut buf)
+                .await
+                .expect("failed to read reponse payload");
+            tx.send(buf).expect("failed to send response to node");
         }
     });
 
