@@ -8,7 +8,7 @@ use der_parser::der::{
 };
 use der_parser::error::{BerError, BerResult};
 use der_parser::nom::combinator::map;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 use utoipa::ToSchema;
 use x509_parser::oid_registry::Oid;
@@ -56,7 +56,7 @@ mod sys {
 
 pub const SGX_QL_ALG_ECDSA_P256: u32 = 2;
 
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct SgxQlQveCollateral {
     pub version: u32,                  // version = 1.  PCK Cert chain is in the Quote.
     pub pck_crl_issuer_chain: String,  // PCK CRL Issuer Chain in PEM format

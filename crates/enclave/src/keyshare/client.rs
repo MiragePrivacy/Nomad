@@ -1,12 +1,9 @@
-use std::{
-    io::{Read, Write},
-    net::{SocketAddrV4, TcpStream},
-    time::SystemTime,
-};
+use std::{net::SocketAddrV4, time::SystemTime};
 
 use arrayref::array_ref;
 use ecies::{PublicKey, SecretKey};
-use eyre::{ensure, eyre, Context, Result};
+use eyre::{bail, ensure, eyre, Context, Result};
+use nomad_types::{AttestResponse, KeyRequest};
 use ra_verify::types::{quote::SgxQuote, report::MREnclave};
 
 pub struct KeyshareClient {
@@ -32,24 +29,27 @@ impl KeyshareClient {
         })
     }
 
-    /// Request a key from an enclave at the remote address
+    /// Request a key from an enclave at the remote address (using nomad api)
     pub fn request_key(&self, addr: SocketAddrV4) -> Result<(SecretKey, PublicKey)> {
-        // establish tcp connection to addr
-        let mut stream = TcpStream::connect(addr).context("failed to dial remote enclave")?;
+        // Get global key attestation from remote enclave
+        let AttestResponse {
+            attestation: Some(attestation),
+            ..
+        } = ureq::get(format!("http://{addr}/attest"))
+            .call()?
+            .body_mut()
+            .read_json::<AttestResponse>()?
+        else {
+            bail!("Peer is not running with sgx");
+        };
 
-        // Read remote attestation
-        let mut len = [0u8; 4];
-        stream.read_exact(&mut len)?;
-        let mut quote = vec![0; u32::from_be_bytes(len) as usize];
-        stream.read_exact(&mut quote)?;
-        let quote = SgxQuote::read(&mut quote.as_slice())
+        // Validate remote enclave attestation against our own collateral
+        let quote = SgxQuote::read(&mut attestation.quote.as_ref())
             .map_err(|e| eyre!("Failed to parse remote enclave quote: {e}"))?;
-
-        // Validate remote enclave attestation
         let (_tcb, report) = ra_verify::verify_remote_attestation(
             // TODO: double check its okay systemtime may be spoofed here
             SystemTime::now(),
-            serde_json::from_slice(&self.collateral)?,
+            serde_json::from_slice(&self.collateral).context("invalid client collateral")?,
             quote,
             &self.mrenclave,
         )
@@ -62,13 +62,15 @@ impl KeyshareClient {
         ensure!(is_debug == self.is_debug, "Debug modes must match");
 
         // Send attestation for our client key
-        stream.write_all(&(self.quote.len() as u32).to_be_bytes())?;
-        stream.write_all(&self.quote)?;
+        let encrypted = ureq::post(format!("http://{addr}/key"))
+            .send_json(KeyRequest {
+                quote: self.quote.clone().into(),
+            })?
+            .into_body()
+            .read_to_vec()?;
 
-        // Read and decrypt global key
-        let mut payload = Vec::new();
-        stream.read_to_end(&mut payload)?;
-        let decrypted = ecies::decrypt(&self.secret.serialize(), &payload)
+        // Decrypt global key
+        let decrypted = ecies::decrypt(&self.secret.serialize(), &encrypted)
             .context("failed to decrypt global key payload")?;
         let secret =
             SecretKey::parse_slice(&decrypted).context("received invalid global secret key")?;

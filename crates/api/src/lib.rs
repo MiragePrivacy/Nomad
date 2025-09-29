@@ -1,6 +1,6 @@
 use std::{sync::Arc, time::SystemTime};
 
-use axum::{body::Body, extract::State, http::StatusCode, Json};
+use axum::{extract::State, http::StatusCode, Json};
 use nomad_dcap_quote::SgxQlQveCollateral;
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -10,14 +10,12 @@ use tokio::{
 use tower_http::cors::{self, CorsLayer};
 use tracing::{debug, info};
 
-use nomad_types::{primitives::Bytes, SignalPayload};
+use nomad_types::{
+    primitives::Bytes, AttestResponse, Attestation, HealthResponse, KeyRequest, SignalPayload,
+};
 use utoipa::OpenApi;
 use utoipa_axum::{router::OpenApiRouter, routes};
 use utoipa_scalar::{Scalar, Servable};
-
-pub mod types;
-
-use crate::types::{AttestResponse, Attestation, HealthResponse};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
@@ -90,18 +88,18 @@ async fn attest(State(app_state): State<AppState>) -> (StatusCode, Json<AttestRe
         (status = INTERNAL_SERVER_ERROR, body = str, description = "Failed to send request to enclave")
     )
 )]
-async fn keyshare(State(app_state): State<AppState>, body: Body) -> (StatusCode, Vec<u8>) {
-    let Ok(request) = axum::body::to_bytes(body, 1024 * 1024).await else {
-        return (
-            StatusCode::BAD_REQUEST,
-            b"Failed to read request payload".to_vec(),
-        );
-    };
-
+async fn keyshare(
+    State(app_state): State<AppState>,
+    Json(request): Json<KeyRequest>,
+) -> (StatusCode, Vec<u8>) {
     // TODO: validate client attestation ahead of time to avoid wasting enclave resources
 
     let (tx, mut rx) = unbounded_channel();
-    if app_state.keyshare_tx.send((request.into(), tx)).is_err() {
+    if app_state
+        .keyshare_tx
+        .send((request.quote.into(), tx))
+        .is_err()
+    {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             b"Failed to send request to enclave".to_vec(),
