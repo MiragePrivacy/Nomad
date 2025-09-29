@@ -1,5 +1,5 @@
+use alloy_primitives::{self, Bytes};
 use nomad_dcap_quote::SgxQlQveCollateral;
-use nomad_types::primitives::{self, Bytes};
 use serde::{Deserialize, Serialize};
 
 use utoipa::ToSchema;
@@ -31,22 +31,28 @@ pub struct RelayGetResponse {
     pub service: String,
 }
 
-#[derive(Serialize, ToSchema, Clone)]
+#[derive(Serialize, Deserialize, ToSchema, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct AttestResponse {
     /// SGX Attestation containing a quote and collateral proving the key and debug mode.
     pub attestation: Option<Attestation>,
     /// Enclave global key (extracted from quote body's enclave report)
     #[schema(value_type = String)]
-    pub global_key: primitives::FixedBytes<33>,
+    pub global_key: alloy_primitives::FixedBytes<33>,
     /// True if the enclave is running in debug mode
     pub is_debug: bool,
 }
 
-#[derive(Serialize, ToSchema, Clone)]
+#[derive(Serialize, Deserialize, ToSchema, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Attestation {
     #[schema(value_type = String)]
     pub quote: Bytes,
     pub collateral: SgxQlQveCollateral,
+}
+
+#[derive(Serialize, Deserialize, ToSchema, Clone)]
+pub struct KeyRequest {
+    #[schema(value_type = String)]
+    pub quote: Bytes,
 }

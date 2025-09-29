@@ -7,8 +7,10 @@ use utoipa::ToSchema;
 
 pub use alloy_primitives as primitives;
 
+mod api;
 mod selectors;
 
+pub use api::*;
 pub use hex_schema::*;
 pub use selectors::*;
 

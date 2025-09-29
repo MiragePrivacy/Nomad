@@ -4,6 +4,8 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+nomad-dcap-quote = { path = "../dcap-quote" }
+
 alloy-primitives.workspace = true
 eyre.workspace = true
 paste.workspace = true

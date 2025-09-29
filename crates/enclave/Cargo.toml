@@ -14,6 +14,9 @@ hex = "0.4.3"
 rdrand = "0.8.3"
 sha2 = "0.10.9"
 
+# Keyshare client
+ureq = { version = "3.1.2", features = ["json"] }
+
 # Enclave attestations and verification
 sgx-isa = "0.4.1"
 ra-verify = { git = "https://github.com/fleek-network/fleek-sgx", branch = "main" }
