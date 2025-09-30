@@ -1,7 +1,6 @@
 use std::{sync::Arc, time::SystemTime};
 
 use axum::{extract::State, http::StatusCode, Json};
-use nomad_dcap_quote::SgxQlQveCollateral;
 use serde::{Deserialize, Serialize};
 use tokio::{
     net::TcpListener,
@@ -9,13 +8,13 @@ use tokio::{
 };
 use tower_http::cors::{self, CorsLayer};
 use tracing::{debug, info};
+use utoipa::OpenApi;
+use utoipa_axum::{router::OpenApiRouter, routes};
+use utoipa_scalar::{Scalar, Servable};
 
 use nomad_types::{
     primitives::Bytes, AttestResponse, Attestation, HealthResponse, KeyRequest, SignalPayload,
 };
-use utoipa::OpenApi;
-use utoipa_axum::{router::OpenApiRouter, routes};
-use utoipa_scalar::{Scalar, Servable};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
@@ -150,7 +149,7 @@ pub async fn spawn_api_server(
     config: ApiConfig,
     is_bootstrap: bool,
     read_only: bool,
-    attestation: Option<(Bytes, SgxQlQveCollateral)>,
+    attestation: Option<(Bytes, serde_json::Value)>,
     publickey: [u8; 33],
     is_debug: bool,
     signal_tx: UnboundedSender<SignalPayload>,

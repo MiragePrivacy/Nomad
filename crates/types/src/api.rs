@@ -1,5 +1,4 @@
 use alloy_primitives::{self, Bytes};
-use nomad_dcap_quote::SgxQlQveCollateral;
 use serde::{Deserialize, Serialize};
 
 use utoipa::ToSchema;
@@ -48,7 +47,8 @@ pub struct AttestResponse {
 pub struct Attestation {
     #[schema(value_type = String)]
     pub quote: Bytes,
-    pub collateral: SgxQlQveCollateral,
+    #[schema(value_type = Object)]
+    pub collateral: serde_json::Value,
 }
 
 #[derive(Serialize, Deserialize, ToSchema, Clone)]
