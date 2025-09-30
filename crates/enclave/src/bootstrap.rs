@@ -4,6 +4,7 @@ use std::{io::Read, net::TcpStream};
 
 use eyre::bail;
 use sgx_isa::Keypolicy;
+use tracing::info;
 
 const EOA_SEAL_KEY_LABEL: &str = "mirage_eoas";
 
@@ -38,7 +39,7 @@ fn handle_kyc_eoas(_stream: &mut TcpStream) -> eyre::Result<(Vec<[u8; 32]>, bool
 
 /// Distribute funds to new eoas from a bootstrap account
 fn handle_bootstraping_new_eoas(_stream: &mut TcpStream) -> eyre::Result<(Vec<[u8; 32]>, bool)> {
-    println!("[init] Bootstrapping new EOAs");
+    info!("[init] Bootstrapping new EOAs");
     // 1. Read bootstrap account private key
     // 2. OFAC compliance check
     // 3. Generate and seal n EOAs
@@ -78,7 +79,7 @@ fn handle_unsealing_and_maybe_bootstraping(
 
 /// DEBUG ONLY: Use raw keys passed directly on the stream
 fn handle_debug_eoas(stream: &mut TcpStream) -> eyre::Result<(Vec<[u8; 32]>, bool)> {
-    println!("[init] loading raw keys in debug mode");
+    info!("[init] loading raw keys in debug mode");
     let mut num = [0];
     stream.read_exact(&mut num)?;
     let mut keys = vec![0; num[0] as usize * 32];

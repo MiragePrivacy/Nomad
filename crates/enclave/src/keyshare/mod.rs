@@ -6,6 +6,7 @@ use std::{
 use ecies::{PublicKey, SecretKey};
 use eyre::{bail, Context};
 use sgx_isa::Keypolicy;
+use tracing::error;
 
 use crate::sealing::derive_ecies_key;
 use client::KeyshareClient;
@@ -168,7 +169,7 @@ fn fetch_global_secret(
     for addr in peers {
         match client.request_key(addr) {
             Err(e) => {
-                eprintln!("[init] Failed to get key from remote enclave: {e}");
+                error!("[init] Failed to get key from remote enclave: {e}");
             }
             // TODO: consider getting keypair from multiple enclaves and using the most
             //       prevelant pair to avoid segmentation or abuse of the bootstrap process
