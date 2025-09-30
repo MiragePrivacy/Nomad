@@ -18,9 +18,17 @@ pub struct KeyshareServer {
 impl KeyshareServer {
     /// Create a new keyshare server
     pub fn new(quote: Vec<u8>, collateral: Vec<u8>) -> Self {
-        let sgx_quote = SgxQuote::read(&mut quote.as_slice()).expect("our own quote to be valid");
-        let mrenclave = sgx_quote.quote_body.report_body.mrenclave;
-        let is_debug = sgx_quote.quote_body.report_body.sgx_report_data_bytes[62] != 0;
+        #[cfg(target_env = "sgx")]
+        let (mrenclave, is_debug) = {
+            let report = SgxQuote::read(&mut quote.as_slice())
+                .expect("our own quote to be valid")
+                .quote_body
+                .report_body;
+            (report.mrenclave, report.sgx_report_data_bytes[62] != 0)
+        };
+        #[cfg(not(target_env = "sgx"))]
+        let (mrenclave, is_debug) = ([42; 32], true);
+
         Self {
             quote,
             collateral,

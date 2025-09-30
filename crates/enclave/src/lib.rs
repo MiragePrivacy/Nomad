@@ -5,7 +5,7 @@ use std::{
 
 use ecies::SecretKey;
 use eyre::bail;
-use nomad_types::{Signal, SignalPayload};
+use nomad_types::{primitives::utils::parse_ether, Signal, SignalPayload};
 
 use crate::{ethereum::EthClient, keyshare::KeyshareServer};
 
@@ -35,7 +35,13 @@ impl Enclave {
         );
 
         // Create eth client and prefetch attestated tls certificates
-        let eth_client = ethereum::EthClient::new(keys, "todo", "todo".into(), "todo".into())?;
+        let eth_client = ethereum::EthClient::new(
+            keys,
+            "todo",
+            "todo".into(),
+            "todo".into(),
+            parse_ether("0.05")?,
+        )?;
 
         // Fetch, generate, or unseal the global secret
         let (secret, public, quote, collateral) =
