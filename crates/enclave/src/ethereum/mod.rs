@@ -1,5 +1,6 @@
 #![allow(unused)]
 
+use alloy_signer_local::PrivateKeySigner;
 use eyre::{bail, ContextCompat, Result};
 use nomad_types::{
     primitives::{Address, TxHash, U256},
@@ -11,7 +12,7 @@ mod geth;
 
 /// High level attested ethereum client
 pub struct EthClient {
-    keys: Vec<[u8; 32]>,
+    keys: Vec<PrivateKeySigner>,
     accounts: Vec<Address>,
     bn: buildernet::BuildernetClient,
     geth: geth::GethClient,
@@ -21,16 +22,16 @@ pub struct EthClient {
 
 impl EthClient {
     pub fn new(
-        keys: Vec<[u8; 32]>,
+        keys: Vec<PrivateKeySigner>,
         bn_atls_url: &str,
         bn_rpc_url: String,
         geth_url: String,
         min_eth: U256,
     ) -> Result<Self> {
+        let accounts = keys.iter().map(|s| s.address()).collect();
         Ok(Self {
             keys,
-            // TODO: derive pks
-            accounts: vec![],
+            accounts,
             bn: buildernet::BuildernetClient::new(bn_atls_url, bn_rpc_url)?,
             geth: geth::GethClient::new(geth_url)?,
             min_eth,
