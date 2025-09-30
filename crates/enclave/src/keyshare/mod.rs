@@ -70,7 +70,7 @@ pub fn initialize_global_secret(
             (secret, public)
         }
         // Unseal from userspace
-        2 => read_and_unseal_global_secret(stream)?,
+        2 => read_and_unseal_global_secret(stream).context("Failed to unseal global secret")?,
         _ => bail!("Invalid enclave startup mode"),
     };
 

@@ -230,17 +230,9 @@ impl Cli {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let cli = Cli::parse();
-
-    let mut hook = color_eyre::config::HookBuilder::new()
+    color_eyre::config::HookBuilder::new()
         .display_env_section(false)
-        .display_location_section(false);
-    if matches!(cli.cmd, commands::Command::Run(_)) {
-        hook = hook
-            .issue_url(concat!(env!("CARGO_PKG_REPOSITORY"), "/issues/new"))
-            .add_issue_metadata("version", env!("CARGO_PKG_VERSION"));
-    }
-    hook.install()?;
-
-    cli.execute().await
+        .display_location_section(false)
+        .install()?;
+    Cli::parse().execute().await
 }
