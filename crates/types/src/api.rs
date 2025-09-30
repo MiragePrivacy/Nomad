@@ -5,6 +5,7 @@ use utoipa::ToSchema;
 
 /// Node health report
 #[derive(Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct HealthResponse {
     #[schema(example = "healthy")]
     pub status: String,
