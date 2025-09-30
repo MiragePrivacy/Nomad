@@ -159,10 +159,12 @@ fn start_enclave(path: &std::path::Path) -> Result<AesmClient> {
 fn start_enclave() -> Result<()> {
     info!("Starting mocked enclave ...");
     tokio::task::spawn_blocking(|| {
-        nomad_enclave::Enclave::new("localhost:8888")
+        nomad_enclave::Enclave::init("localhost:8888")
+            .expect("failed to initialize non-sgx enclave")
             .run()
-            .expect("uh oh, enclave crashed")
+            .expect("uh oh, non-sgx enclave crashed")
     });
+    Ok(())
 }
 
 /// Global key initialization routine

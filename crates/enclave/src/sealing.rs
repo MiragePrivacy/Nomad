@@ -40,9 +40,9 @@ pub fn seal(policy: Keypolicy, label: &str, data: &[u8]) -> eyre::Result<Vec<u8>
 pub fn unseal(policy: Keypolicy, label: &str, data: &[u8]) -> eyre::Result<Vec<u8>> {
     let seal_data = SealData::from_slice(policy, label, data)?;
     let key = egetkey(&seal_data)?;
-    let nonce = *array_ref![data, SealData::SIZE, 12];
-    let payload = &data[SealData::SIZE + 12..];
-    let Ok(decrypted) = Aes256Gcm::new(&key.into()).decrypt(&nonce.into(), payload) else {
+    let payload = &data[SealData::SIZE..];
+    let Ok(decrypted) = Aes256Gcm::new(&key.into()).decrypt(&seal_data.nonce.into(), payload)
+    else {
         bail!("Failed to unseal data");
     };
     Ok(decrypted)
