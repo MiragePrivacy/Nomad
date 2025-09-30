@@ -21,6 +21,9 @@ pub struct HealthResponse {
     pub is_bootstrap: bool,
     /// Currently only broadcasting and not processing signals
     pub read_only: bool,
+    /// Ethereum network/chain ID
+    #[schema(example = 1)]
+    pub chain_id: u64,
 }
 
 /// Relay get response

@@ -42,6 +42,19 @@ impl NomadNode {
         let (publickey, is_debug, attestation) =
             enclave::spawn_enclave(&config.enclave, rx, res_tx).await?;
 
+        // Build eth client
+        let accounts = config
+            .enclave
+            .debug_keys
+            .iter()
+            .map(|b| PrivateKeySigner::from_slice(b).expect("valid debug key"))
+            .collect();
+        let mut eth_client = EthClient::new(config.eth, accounts).await?;
+        eth_client.enable_balance_metrics().await;
+
+        // Fetch chain ID
+        let chain_id = eth_client.chain_id().await?;
+
         // Spawn api server
         // TODO: add attestation endpoint with report and enclave public key
         let (signal_tx, signal_rx) = unbounded_channel();
@@ -55,6 +68,7 @@ impl NomadNode {
             is_debug,
             signal_tx,
             keyshare_tx,
+            chain_id,
         )
         .await;
 
@@ -62,16 +76,6 @@ impl NomadNode {
         let signal_pool = SignalPool::new(65535);
         let read_only = Arc::new(AtomicBool::new(read_only));
         P2pNode::new(config.p2p, signal_pool.clone(), read_only, Some(signal_rx))?.spawn();
-
-        // Build eth client
-        let accounts = config
-            .enclave
-            .debug_keys
-            .iter()
-            .map(|b| PrivateKeySigner::from_slice(b).expect("valid debug key"))
-            .collect();
-        let mut eth_client = EthClient::new(config.eth, accounts).await?;
-        eth_client.enable_balance_metrics().await;
 
         // Setup metrics
         let meter = meter_provider().meter("nomad");

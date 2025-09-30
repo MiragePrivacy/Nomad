@@ -34,6 +34,7 @@ pub struct AppState {
     pub start_time: SystemTime,
     pub is_bootstrap: bool,
     pub read_only: bool,
+    pub chain_id: u64,
 
     // attest endpoint
     pub attestation: Arc<AttestResponse>,
@@ -61,6 +62,7 @@ async fn health(State(app_state): State<AppState>) -> Json<HealthResponse> {
         uptime_seconds,
         is_bootstrap: app_state.is_bootstrap,
         read_only: app_state.read_only,
+        chain_id: app_state.chain_id,
     })
 }
 
@@ -154,6 +156,7 @@ pub async fn spawn_api_server(
     is_debug: bool,
     signal_tx: UnboundedSender<SignalPayload>,
     keyshare_tx: UnboundedSender<(Vec<u8>, UnboundedSender<Vec<u8>>)>,
+    chain_id: u64,
 ) -> eyre::Result<()> {
     debug!(?config);
 
@@ -187,6 +190,7 @@ pub async fn spawn_api_server(
             start_time: SystemTime::now(),
             is_bootstrap,
             read_only,
+            chain_id,
             attestation,
             signal_tx,
             keyshare_tx,

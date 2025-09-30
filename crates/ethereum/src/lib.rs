@@ -610,4 +610,10 @@ impl EthClient {
 
         Ok(())
     }
+
+    /// Get the chain ID of the connected network
+    pub async fn chain_id(&self) -> Result<u64, ClientError> {
+        let chain_id = self.read_provider.get_chain_id().await?;
+        Ok(chain_id)
+    }
 }
