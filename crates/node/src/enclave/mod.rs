@@ -4,7 +4,6 @@ use aesm_client::AesmClient;
 use alloy::primitives::Bytes;
 use eyre::{bail, eyre, Context, Result};
 
-use nomad_dcap_quote::SgxQlQveCollateral;
 use resolve_path::PathResolveExt;
 use serde::{Deserialize, Serialize};
 use sgx_isa::Report;
@@ -83,7 +82,7 @@ pub async fn spawn_enclave(
     config: &EnclaveConfig,
     mut rx: UnboundedReceiver<EnclaveRequest>,
     tx: UnboundedSender<Vec<u8>>,
-) -> Result<([u8; 33], bool, Option<(Bytes, SgxQlQveCollateral)>)> {
+) -> Result<([u8; 33], bool, Option<(Bytes, serde_json::Value)>)> {
     #[cfg(feature = "nosgx")]
     start_enclave()?;
     #[cfg(not(feature = "nosgx"))]
@@ -172,7 +171,7 @@ async fn init_global_key(
     config: &EnclaveConfig,
     stream: &mut TcpStream,
     #[cfg(not(feature = "nosgx"))] aesm_client: &AesmClient,
-) -> Result<([u8; 33], bool, Option<(Bytes, SgxQlQveCollateral)>)> {
+) -> Result<([u8; 33], bool, Option<(Bytes, serde_json::Value)>)> {
     let key_path = config.seal_path.join("key.bin");
     let key_path = key_path.resolve();
     if let Ok(data) = std::fs::read(&key_path) {
@@ -223,7 +222,7 @@ async fn init_global_key(
 async fn read_report_and_reply_with_quote(
     stream: &mut TcpStream,
     #[cfg(not(feature = "nosgx"))] aesm_client: &AesmClient,
-) -> Result<([u8; 33], bool, Option<(Bytes, SgxQlQveCollateral)>)> {
+) -> Result<([u8; 33], bool, Option<(Bytes, serde_json::Value)>)> {
     let len = stream.read_u32().await? as usize;
     let mut payload = vec![0; len];
     stream.read_exact(&mut payload).await?;
@@ -247,6 +246,7 @@ async fn read_report_and_reply_with_quote(
     #[cfg(not(feature = "nosgx"))]
     {
         use eyre::ContextCompat;
+        use serde_json::to_value;
 
         // Read report and parse public key
         let report = Report::try_copy_from(&payload).context("failed to decode enclave report")?;
@@ -254,6 +254,7 @@ async fn read_report_and_reply_with_quote(
 
         // Generate a quote for the report
         let (quote, collateral, _) = quote::get_quote_for_report(aesm_client, &report)?;
+        let collateral = to_value(collateral)?;
         stream.write_u32(quote.len() as u32).await?;
         stream.write_all(&quote).await?;
         let collateral_bytes = serde_json::to_vec(&collateral)?;
