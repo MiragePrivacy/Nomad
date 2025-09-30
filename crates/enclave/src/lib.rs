@@ -5,7 +5,8 @@ use std::{
 
 use ecies::SecretKey;
 use eyre::bail;
-use nomad_types::{primitives::utils::parse_ether, Signal, SignalPayload};
+use nomad_types::{primitives::utils::parse_ether, Signal};
+use tracing::{error, info};
 
 use crate::{ethereum::EthClient, keyshare::KeyshareServer};
 
@@ -28,7 +29,7 @@ impl Enclave {
 
         // Bootstrap and/or unseal node eoa accounts
         let (keys, is_debug) = bootstrap::initialize_eoas(&mut stream)?;
-        println!(
+        info!(
             "[init] Loaded {}{} EOAs",
             keys.len(),
             if is_debug { " debug" } else { "" }
@@ -47,7 +48,7 @@ impl Enclave {
         let (secret, public, quote, collateral) =
             keyshare::initialize_global_secret(&mut stream, is_debug)?;
 
-        println!(
+        info!(
             "[init] Global Enclave Key (secp256k1): 0x{}",
             hex::encode(public.serialize_compressed())
         );
@@ -88,8 +89,7 @@ impl Enclave {
         self.stream.read_exact(&mut payload)?;
 
         // Decrypt signal
-        let signal: SignalPayload = serde_json::from_slice(&payload)?;
-        let Ok(bytes) = ecies::decrypt(&self.secret.serialize(), &signal.0) else {
+        let Ok(bytes) = ecies::decrypt(&self.secret.serialize(), &payload) else {
             self.stream.write_all(&0u32.to_be_bytes())?;
             return Ok(());
         };
@@ -99,14 +99,23 @@ impl Enclave {
         };
 
         // Execute signal
+        if let Err(e) = self.execute_signal(signal) {
+            error!("Failed to execute signal: {e}");
+            self.stream.write_all(&0u32.to_be_bytes())?;
+            return Ok(());
+        }
+
+        // TODO: Sign and send acknowledgement
+
+        Ok(())
+    }
+
+    fn execute_signal(&mut self, signal: Signal) -> eyre::Result<()> {
         let [eoa_1, eoa_2] = self.eth_client.select_accounts(&signal)?;
         let [_approve_tx, _bond_tx] = self.eth_client.bond(eoa_1, &signal)?;
         let transfer_tx = self.eth_client.transfer(eoa_2, &signal)?;
         let _collect_tx = self.eth_client.collect(eoa_1, &signal, transfer_tx)?;
         self.stream.write_all(&0u32.to_be_bytes())?;
-
-        // TODO: Sign and send acknowledgement
-
         Ok(())
     }
 }
