@@ -2,9 +2,10 @@
 
 use std::{io::Read, net::TcpStream};
 
+use alloy_signer_local::PrivateKeySigner;
 use eyre::bail;
 use sgx_isa::Keypolicy;
-use tracing::info;
+use tracing::{debug, info};
 
 const EOA_SEAL_KEY_LABEL: &str = "mirage_eoas";
 
@@ -14,7 +15,7 @@ const EOA_SEAL_KEY_LABEL: &str = "mirage_eoas";
 ///   - Unsealing existing EOAs
 ///   - Unsealing and maybe bootstrapping additional funds
 ///   - DEBUG ONLY: Use raw keys provided
-pub fn initialize_eoas(stream: &mut TcpStream) -> eyre::Result<(Vec<[u8; 32]>, bool)> {
+pub fn initialize_eoas(stream: &mut TcpStream) -> eyre::Result<(Vec<PrivateKeySigner>, bool)> {
     let mut mode = [0];
     stream.read_exact(&mut mode)?;
     match mode[0] {
@@ -30,7 +31,7 @@ pub fn initialize_eoas(stream: &mut TcpStream) -> eyre::Result<(Vec<[u8; 32]>, b
 /// Directly use EOA accounts that have been KYC'd and approved to run on the network.
 /// These should only be used in the beginning stages of a network where new nodes need
 /// to be able to bootstrap off of these. Eventually they should be replaced with new eoas.
-fn handle_kyc_eoas(_stream: &mut TcpStream) -> eyre::Result<(Vec<[u8; 32]>, bool)> {
+fn handle_kyc_eoas(_stream: &mut TcpStream) -> eyre::Result<(Vec<PrivateKeySigner>, bool)> {
     // 1. Read private keys from stream
     // 2. Compute H(Public(key0) . Public(key1) ... )
     // 3. Read and verify signature from MRSIGNER
@@ -38,7 +39,9 @@ fn handle_kyc_eoas(_stream: &mut TcpStream) -> eyre::Result<(Vec<[u8; 32]>, bool
 }
 
 /// Distribute funds to new eoas from a bootstrap account
-fn handle_bootstraping_new_eoas(_stream: &mut TcpStream) -> eyre::Result<(Vec<[u8; 32]>, bool)> {
+fn handle_bootstraping_new_eoas(
+    _stream: &mut TcpStream,
+) -> eyre::Result<(Vec<PrivateKeySigner>, bool)> {
     info!("[init] Bootstrapping new EOAs");
     // 1. Read bootstrap account private key
     // 2. OFAC compliance check
@@ -50,7 +53,7 @@ fn handle_bootstraping_new_eoas(_stream: &mut TcpStream) -> eyre::Result<(Vec<[u
 }
 
 /// Unseal EOA accounts from previous enclave state
-fn handle_unsealing_eoas(stream: &mut TcpStream) -> eyre::Result<(Vec<[u8; 32]>, bool)> {
+fn handle_unsealing_eoas(stream: &mut TcpStream) -> eyre::Result<(Vec<PrivateKeySigner>, bool)> {
     let mut len = [0u8; 4];
     stream.read_exact(&mut len)?;
     let len = u32::from_be_bytes(len) as usize;
@@ -63,7 +66,7 @@ fn handle_unsealing_eoas(stream: &mut TcpStream) -> eyre::Result<(Vec<[u8; 32]>,
     Ok((
         decrypted
             .chunks_exact(32)
-            .map(|k| k.try_into().unwrap())
+            .map(|k| PrivateKeySigner::from_slice(k).expect("valid signing key"))
             .collect(),
         false,
     ))
@@ -73,12 +76,12 @@ fn handle_unsealing_eoas(stream: &mut TcpStream) -> eyre::Result<(Vec<[u8; 32]>,
 /// to existing EOAs from a bootstrap account
 fn handle_unsealing_and_maybe_bootstraping(
     _stream: &mut TcpStream,
-) -> eyre::Result<(Vec<[u8; 32]>, bool)> {
+) -> eyre::Result<(Vec<PrivateKeySigner>, bool)> {
     unimplemented!()
 }
 
 /// DEBUG ONLY: Use raw keys passed directly on the stream
-fn handle_debug_eoas(stream: &mut TcpStream) -> eyre::Result<(Vec<[u8; 32]>, bool)> {
+fn handle_debug_eoas(stream: &mut TcpStream) -> eyre::Result<(Vec<PrivateKeySigner>, bool)> {
     info!("[init] loading raw keys in debug mode");
     let mut num = [0];
     stream.read_exact(&mut num)?;
@@ -86,7 +89,8 @@ fn handle_debug_eoas(stream: &mut TcpStream) -> eyre::Result<(Vec<[u8; 32]>, boo
     stream.read_exact(&mut keys)?;
     Ok((
         keys.chunks_exact(32)
-            .map(|k| k.try_into().unwrap())
+            .map(|k| PrivateKeySigner::from_slice(k).expect("valid signing key"))
+            .inspect(|v| debug!("Using debug EOA: {}", v.address()))
             .collect(),
         true,
     ))

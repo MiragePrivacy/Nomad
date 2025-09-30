@@ -10,23 +10,21 @@ eyre.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
+
 arrayref = "0.3.9"
 hex = "0.4.3"
 rdrand = "0.8.3"
 sha2 = "0.10.9"
 
 # Keyshare client
-ureq = { version = "3.1.2", features = ["json"] }
+ureq = { version = "3.1.2", default-features = false, features = ["json"] }
 
-# Enclave attestations and verification
 sgx-isa = "0.4.1"
 ra-verify = { git = "https://github.com/fleek-network/fleek-sgx", branch = "main" }
 
-# Enclave signatures
 libsecp256k1  = "=0.7.2"
-
-# Sealing data
 aes-gcm = "=0.10.3"
+alloy-signer-local = "1.0"
 
 # Signal encryption and global keyshare
 [dependencies.ecies]
