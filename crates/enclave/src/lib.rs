@@ -4,11 +4,14 @@ use std::{
 };
 
 use ecies::SecretKey;
-use eyre::bail;
-use nomad_types::{primitives::utils::parse_ether, Signal};
+use eyre::{bail, Context, ContextCompat};
+use nomad_types::Signal;
 use tracing::{error, info, instrument};
 
-use crate::{ethereum::EthClient, keyshare::KeyshareServer};
+use crate::{
+    ethereum::{EthClient, EthConfig},
+    keyshare::KeyshareServer,
+};
 
 mod bootstrap;
 mod ethereum;
@@ -23,8 +26,14 @@ pub struct Enclave {
 }
 
 impl Enclave {
-    #[instrument]
+    #[instrument(skip_all)]
     pub fn init(addr: &str) -> eyre::Result<Self> {
+        // Setup crypto provider
+        rustls_rustcrypto::provider()
+            .install_default()
+            .ok()
+            .context("Failed to setup rustcrypto tls provider")?;
+
         // Connect to the runner
         let mut stream = TcpStream::connect(addr)?;
 
@@ -36,14 +45,11 @@ impl Enclave {
             if is_debug { " debug" } else { "" }
         );
 
+        let config =
+            EthConfig::read_from_stream(&mut stream).context("Failed to read enclave config")?;
+
         // Create eth client and prefetch attestated tls certificates
-        let eth_client = ethereum::EthClient::new(
-            keys,
-            "todo",
-            "todo".into(),
-            "todo".into(),
-            parse_ether("0.05")?,
-        )?;
+        let eth_client = ethereum::EthClient::new(keys, config)?;
 
         // Fetch, generate, or unseal the global secret
         let (secret, public, quote, collateral) =

@@ -82,7 +82,7 @@ fn handle_unsealing_and_maybe_bootstraping(
 
 /// DEBUG ONLY: Use raw keys passed directly on the stream
 fn handle_debug_eoas(stream: &mut TcpStream) -> eyre::Result<(Vec<PrivateKeySigner>, bool)> {
-    info!("[init] loading raw keys in debug mode");
+    info!("Loading raw debug keys");
     let mut num = [0];
     stream.read_exact(&mut num)?;
     let mut keys = vec![0; num[0] as usize * 32];

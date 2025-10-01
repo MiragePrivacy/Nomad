@@ -1,5 +1,8 @@
+use std::{io::Read, net::TcpStream};
+
 use alloy_consensus::{SignableTransaction, TxLegacy};
 use alloy_network::{eip2718::Encodable2718, TxSignerSync};
+use alloy_primitives::utils::parse_ether;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolCall;
 use eyre::{bail, ContextCompat, Result};
@@ -7,13 +10,36 @@ use nomad_types::{
     primitives::{Address, Bytes, TxHash, U256},
     Signal,
 };
+use serde::{Deserialize, Serialize};
+
+use contracts::{Escrow, IERC20};
 
 mod buildernet;
 mod contracts;
 mod geth;
 mod proof;
 
-use contracts::{Escrow, IERC20};
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct EthConfig {
+    pub geth_rpc: String,
+    pub builder_rpc: String,
+    pub builder_atls: String,
+    pub min_eth: f64,
+}
+
+impl EthConfig {
+    pub fn read_from_stream(stream: &mut TcpStream) -> Result<Self> {
+        // Read u32 length prefixed signal payload from the stream
+        let mut len = [0u8; 4];
+        stream.read_exact(&mut len)?;
+        let len = u32::from_be_bytes(len) as usize;
+        // Read payload
+        let mut payload = vec![0u8; len];
+        stream.read_exact(&mut payload)?;
+        // Parse from json
+        Ok(serde_json::from_slice(&payload)?)
+    }
+}
 
 #[allow(unused)]
 /// High level attested ethereum client
@@ -28,15 +54,11 @@ pub struct EthClient {
 }
 
 impl EthClient {
-    pub fn new(
-        keys: Vec<PrivateKeySigner>,
-        bn_atls_url: &str,
-        bn_rpc_url: String,
-        geth_url: String,
-        min_eth: U256,
-    ) -> Result<Self> {
+    pub fn new(keys: Vec<PrivateKeySigner>, config: EthConfig) -> Result<Self> {
         let accounts = keys.iter().map(|s| s.address()).collect();
-        let geth = geth::GethClient::new(geth_url)?;
+        let geth = geth::GethClient::new(config.geth_rpc)?;
+        let bn = buildernet::BuildernetClient::new(&config.builder_atls, config.builder_rpc)?;
+        let min_eth = parse_ether(&config.min_eth.to_string())?;
 
         // Fetch chain_id from geth
         let chain_id = geth.get_chain_id()?;
@@ -44,7 +66,7 @@ impl EthClient {
         Ok(Self {
             keys,
             accounts,
-            bn: buildernet::BuildernetClient::new(bn_atls_url, bn_rpc_url)?,
+            bn,
             geth,
             min_eth,
             chain_id,

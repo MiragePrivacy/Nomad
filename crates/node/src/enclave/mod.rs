@@ -4,8 +4,10 @@ use aesm_client::AesmClient;
 use alloy::primitives::Bytes;
 use eyre::{bail, eyre, Context, Result};
 
+use reqwest::Url;
 use resolve_path::PathResolveExt;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use sgx_isa::Report;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -25,6 +27,11 @@ pub struct EnclaveConfig {
     /// Directory path to store sealed data (key.bin, eoa.bin).
     /// Defaults to nomad config directory.
     pub seal_path: PathBuf,
+
+    pub geth_rpc: Url,
+    pub builder_rpc: Url,
+    pub builder_atls: Url,
+
     /// List of bootstrap nodes to fetch enclave key from.
     /// If empty, assumes this is the first enclave and that
     /// we should create the key ourselves.
@@ -48,6 +55,11 @@ impl Default for EnclaveConfig {
             debug_keys: vec![],
             bootstrap_keys: vec![],
             num_accounts: 2,
+            geth_rpc: "https://ethereum-sepolia-rpc.publicnode.com"
+                .parse()
+                .unwrap(),
+            builder_rpc: "https://rpc.buildernet.org:443".parse().unwrap(),
+            builder_atls: "https://rpc.buildernet.org:7936".parse().unwrap(),
         }
     }
 }
@@ -98,6 +110,17 @@ pub async fn spawn_enclave(
     init_eoa_keys(config, &mut stream)
         .await
         .context("failed to initialize EOA keys")?;
+
+    // Send ethereum config
+    let payload = serde_json::to_vec(&json!({
+        "geth_rpc": config.geth_rpc,
+        "builder_rpc": config.builder_rpc,
+        "builder_atls": config.builder_atls,
+        "min_eth": 0.05
+    }))
+    .unwrap();
+    stream.write_u32(payload.len() as u32).await?;
+    stream.write_all(&payload).await?;
 
     #[cfg(feature = "nosgx")]
     let fut = init_global_key(config, &mut stream);
