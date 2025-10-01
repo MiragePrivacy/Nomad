@@ -94,32 +94,9 @@ impl GethClient {
             .context("Failed to parse balance")
     }
 
-    pub fn get_block(&self) -> Result<u64> {
-        let block_number: String = self
-            .rpc_call("eth_blockNumber", json!([]))
-            .context("Failed to get block number")?;
-
-        u64::from_str_radix(block_number.trim_start_matches("0x"), 16)
-            .context("Failed to parse block number")
-    }
-
     pub fn get_transaction_receipt(&self, hash: TxHash) -> Result<Option<TransactionReceipt>> {
         self.rpc_call("eth_getTransactionReceipt", vec![format!("{:?}", hash)])
             .context("Failed to get transaction receipt")
-    }
-
-    /// Send a raw signed transaction
-    pub fn send_raw_transaction(&self, signed_tx: Bytes) -> Result<TxHash> {
-        let tx_hash: String = self
-            .rpc_call(
-                "eth_sendRawTransaction",
-                vec![format!("0x{}", hex::encode(signed_tx))],
-            )
-            .context("Failed to send raw transaction")?;
-
-        Ok(TxHash::from_slice(&hex::decode(
-            tx_hash.trim_start_matches("0x"),
-        )?))
     }
 
     /// Get nonce for an account
@@ -185,14 +162,14 @@ impl GethClient {
     }
 
     /// Get erc20 decimals
-    pub fn erc20_decimals(&self, token: Address) -> Result<u8> {
+    pub fn _erc20_decimals(&self, token: Address) -> Result<u8> {
         let result = self.eth_call(token, IERC20::decimalsCall {})?;
         // Decode uint8 from 32 bytes (last byte contains the value)
         Ok(result[31])
     }
 
     /// Check if an escrow is bonded
-    pub fn escrow_is_bonded(&self, escrow: Address) -> Result<bool> {
+    pub fn _escrow_is_bonded(&self, escrow: Address) -> Result<bool> {
         let result = self.eth_call(escrow, Escrow::is_bondedCall {})?;
         // Decode boolean result (32 bytes, last byte is 0 or 1)
         Ok(result.len() >= 32 && result[31] != 0)
