@@ -41,7 +41,7 @@ struct JsonRpcError {
 
 pub struct GethClient {
     rpc_url: String,
-    cert: Option<String>,
+    _cert: Option<String>,
 }
 
 impl GethClient {
@@ -50,7 +50,7 @@ impl GethClient {
 
         Ok(Self {
             rpc_url,
-            cert: None,
+            _cert: None,
         })
     }
 

@@ -42,7 +42,7 @@ fn handle_kyc_eoas(_stream: &mut TcpStream) -> eyre::Result<(Vec<PrivateKeySigne
 fn handle_bootstraping_new_eoas(
     _stream: &mut TcpStream,
 ) -> eyre::Result<(Vec<PrivateKeySigner>, bool)> {
-    info!("[init] Bootstrapping new EOAs");
+    info!("Bootstrapping new EOAs");
     // 1. Read bootstrap account private key
     // 2. OFAC compliance check
     // 3. Generate and seal n EOAs

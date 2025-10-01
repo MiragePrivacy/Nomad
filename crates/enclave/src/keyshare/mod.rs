@@ -169,7 +169,7 @@ fn fetch_global_secret(
     for addr in peers {
         match client.request_key(addr) {
             Err(e) => {
-                error!("[init] Failed to get key from remote enclave: {e}");
+                error!("Failed to get key from remote enclave: {e}");
             }
             // TODO: consider getting keypair from multiple enclaves and using the most
             //       prevelant pair to avoid segmentation or abuse of the bootstrap process

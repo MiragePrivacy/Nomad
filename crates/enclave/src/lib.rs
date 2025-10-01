@@ -6,7 +6,7 @@ use std::{
 use ecies::SecretKey;
 use eyre::bail;
 use nomad_types::{primitives::utils::parse_ether, Signal};
-use tracing::{error, info};
+use tracing::{error, info, instrument};
 
 use crate::{ethereum::EthClient, keyshare::KeyshareServer};
 
@@ -23,6 +23,7 @@ pub struct Enclave {
 }
 
 impl Enclave {
+    #[instrument]
     pub fn init(addr: &str) -> eyre::Result<Self> {
         // Connect to the runner
         let mut stream = TcpStream::connect(addr)?;
@@ -30,7 +31,7 @@ impl Enclave {
         // Bootstrap and/or unseal node eoa accounts
         let (keys, is_debug) = bootstrap::initialize_eoas(&mut stream)?;
         info!(
-            "[init] Loaded {}{} EOAs",
+            "Loaded {}{} EOAs",
             keys.len(),
             if is_debug { " debug" } else { "" }
         );
@@ -49,7 +50,7 @@ impl Enclave {
             keyshare::initialize_global_secret(&mut stream, is_debug)?;
 
         info!(
-            "[init] Global Enclave Key (secp256k1): 0x{}",
+            "Global Enclave Key: 0x{}",
             hex::encode(public.serialize_compressed())
         );
 

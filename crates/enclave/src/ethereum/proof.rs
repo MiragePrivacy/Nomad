@@ -137,7 +137,7 @@ impl super::EthClient {
         let mut proof_nodes_vec: Vec<_> = list
             .take_proof_nodes()
             .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
+            .map(|(k, v)| (*k, v.clone()))
             .collect();
 
         proof_nodes_vec

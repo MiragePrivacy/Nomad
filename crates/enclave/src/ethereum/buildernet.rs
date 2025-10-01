@@ -28,7 +28,7 @@ struct JsonRpcError {
 
 pub struct BuildernetClient {
     rpc_url: String,
-    cert: Option<String>,
+    _cert: Option<String>,
 }
 
 impl BuildernetClient {
@@ -37,7 +37,7 @@ impl BuildernetClient {
 
         Ok(Self {
             rpc_url,
-            cert: None,
+            _cert: None,
         })
     }
 
