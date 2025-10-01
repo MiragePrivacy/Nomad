@@ -66,15 +66,12 @@ impl BuildernetClient {
 
         response
             .result
-            .ok_or_else(|| eyre::eyre!("RPC response missing result"))
+            .ok_or_else(|| eyre::eyre!("rpc error: {:?}", response.error))
     }
 
     pub fn send_raw_transaction(&self, signed_tx: Bytes) -> Result<TxHash> {
         let tx_hash: String = self
-            .rpc_call(
-                "eth_sendRawTransaction",
-                vec![format!("0x{}", hex::encode(signed_tx))],
-            )
+            .rpc_call("eth_sendRawTransaction", vec![signed_tx.to_string()])
             .context("Failed to send raw transaction")?;
 
         Ok(TxHash::from_slice(&hex::decode(

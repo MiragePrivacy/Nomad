@@ -1,8 +1,7 @@
-use std::hash::{Hash, Hasher};
+use std::hash::Hash;
 
 use alloy_primitives::{Address, Bytes, U256};
 use serde::{Deserialize, Serialize};
-use url::Url;
 use utoipa::ToSchema;
 
 pub use alloy_primitives as primitives;
@@ -39,26 +38,10 @@ pub struct Signal {
     /// Reward amount for the node
     #[schema(value_type = U256String)]
     pub reward_amount: U256,
-    /// Acknowledgement address for submitting the receipt to
-    #[schema(example = "http://your-server.com/ack")]
-    pub acknowledgement_url: Url,
     /// Optional mappings for an obfuscated contract
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(default = "null")]
     pub selector_mapping: Option<SelectorMapping>,
-}
-
-impl Hash for Signal {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.escrow_contract.hash(state);
-        self.token_contract.hash(state);
-        self.recipient.hash(state);
-        self.transfer_amount.hash(state);
-        self.reward_amount.hash(state);
-        self.acknowledgement_url.hash(state);
-        // deliberately exclude selector_mapping from hash
-        // this way signals are deduplicated based on core content, not obfuscation
-    }
 }
 
 impl std::fmt::Display for Signal {

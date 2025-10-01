@@ -127,9 +127,9 @@ impl GethClient {
             .rpc_call(
                 "eth_estimateGas",
                 vec![json!({
-                    "from": format!("{:?}", from),
-                    "to": format!("{:?}", to),
-                    "data": &data,
+                    "from": from.to_string(),
+                    "to": to.to_string(),
+                    "data": data.to_string(),
                 })],
             )
             .context("Failed to estimate gas")?;
@@ -144,8 +144,8 @@ impl GethClient {
                 "eth_call",
                 vec![
                     json!({
-                        "to": format!("{:?}", to),
-                        "data": &Bytes::from(data.abi_encode()),
+                        "to": to.to_string(),
+                        "data": Bytes::from(data.abi_encode()).to_string(),
                     }),
                     json!("latest"),
                 ],

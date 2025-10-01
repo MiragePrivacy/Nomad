@@ -86,6 +86,7 @@ impl Enclave {
         self.keyshare.handle_request(&mut self.stream, &self.secret)
     }
 
+    #[instrument(name = "signal", skip_all)]
     fn handle_signal_request(&mut self) -> eyre::Result<()> {
         // Read u32 length prefixed signal payload from the stream
         let mut len = [0u8; 4];
@@ -107,21 +108,25 @@ impl Enclave {
 
         // Execute signal
         if let Err(e) = self.execute_signal(signal) {
-            error!("Failed to execute signal: {e}");
+            error!("Failed to execute signal: {e:#}");
             self.stream.write_all(&0u32.to_be_bytes())?;
             return Ok(());
         }
 
-        // TODO: Sign and send acknowledgement
-
         Ok(())
     }
 
+    #[instrument(name = "execute", skip_all, fields(signal.token_contract))]
     fn execute_signal(&mut self, signal: Signal) -> eyre::Result<()> {
+        info!("Selecting accounts");
         let [eoa_1, eoa_2] = self.eth_client.select_accounts(&signal)?;
+        info!("Bonding contract");
         let [_approve_tx, _bond_tx] = self.eth_client.bond(eoa_1, &signal)?;
+        info!("Transferring funds");
         let transfer_tx = self.eth_client.transfer(eoa_2, &signal)?;
+        info!("Collecting rewards");
         let _collect_tx = self.eth_client.collect(eoa_1, &signal, transfer_tx)?;
+        info!("Successfully executed signal");
         self.stream.write_all(&0u32.to_be_bytes())?;
         Ok(())
     }

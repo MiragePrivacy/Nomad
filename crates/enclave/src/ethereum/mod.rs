@@ -163,7 +163,7 @@ impl EthClient {
         let from = signer.address();
 
         // Fetch transaction parameters from geth
-        let nonce = self.geth.get_transaction_count(from)?;
+        let nonce = self.geth.get_transaction_count(from)? + 1;
         let gas_price = self.geth.gas_price()?;
 
         // Encode call data
