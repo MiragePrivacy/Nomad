@@ -4342,7 +4342,13 @@ name = "nomad-enclave"
 version = "0.1.0"
 dependencies = [
  "aes-gcm",
+ "alloy-consensus",
+ "alloy-contract",
+ "alloy-network",
+ "alloy-signer",
  "alloy-signer-local",
+ "alloy-sol-macro",
+ "alloy-sol-types",
  "arrayref",
  "ecies",
  "eyre",
