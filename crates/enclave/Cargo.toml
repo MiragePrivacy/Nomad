@@ -25,6 +25,10 @@ alloy-contract = "1.0"
 alloy-consensus = "1.0"
 alloy-network = "1.0"
 alloy-signer = "1.0"
+alloy-primitives = "1.0"
+alloy-rlp = "0.3"
+alloy-trie = "0.7"
+alloy-rpc-types-eth = "1.0"
 
 # Sgx and crypto
 ra-verify = { git = "https://github.com/fleek-network/fleek-sgx", branch = "main" }

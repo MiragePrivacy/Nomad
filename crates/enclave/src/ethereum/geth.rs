@@ -6,6 +6,7 @@
 //! - Hidden transaction polling (buildernet wont publish until its in a block)
 //! - Transaction Receipts
 
+use alloy_rpc_types_eth::{Block, TransactionReceipt};
 use alloy_sol_types::SolCall;
 use eyre::{Context, Result};
 use nomad_types::primitives::{Address, Bytes, TxHash, U256};
@@ -102,12 +103,7 @@ impl GethClient {
             .context("Failed to parse block number")
     }
 
-    pub fn get_transaction(&self, hash: TxHash) -> Result<Option<serde_json::Value>> {
-        self.rpc_call("eth_getTransactionByHash", vec![format!("{:?}", hash)])
-            .context("Failed to get transaction")
-    }
-
-    pub fn get_transaction_receipt(&self, hash: TxHash) -> Result<Option<serde_json::Value>> {
+    pub fn get_transaction_receipt(&self, hash: TxHash) -> Result<Option<TransactionReceipt>> {
         self.rpc_call("eth_getTransactionReceipt", vec![format!("{:?}", hash)])
             .context("Failed to get transaction receipt")
     }
@@ -164,7 +160,6 @@ impl GethClient {
         u64::from_str_radix(gas.trim_start_matches("0x"), 16).context("Failed to parse gas")
     }
 
-
     /// Call eth_call for contract view functions
     pub fn eth_call(&self, to: Address, data: impl SolCall) -> Result<Bytes> {
         let result: String = self
@@ -209,6 +204,22 @@ impl GethClient {
             .rpc_call("eth_chainId", json!([]))
             .context("Failed to get chain ID")?;
 
-        u64::from_str_radix(chain_id.trim_start_matches("0x"), 16).context("Failed to parse chain ID")
+        u64::from_str_radix(chain_id.trim_start_matches("0x"), 16)
+            .context("Failed to parse chain ID")
+    }
+
+    /// Get block by hash
+    pub fn get_block_by_hash(&self, hash: TxHash) -> Result<Block> {
+        self.rpc_call(
+            "eth_getBlockByHash",
+            vec![format!("{:?}", hash), "false".to_string()],
+        )
+        .context("Failed to get block by hash")
+    }
+
+    /// Get all receipts for a block
+    pub fn get_block_receipts(&self, block_hash: TxHash) -> Result<Vec<TransactionReceipt>> {
+        self.rpc_call("eth_getBlockReceipts", vec![format!("{:?}", block_hash)])
+            .context("Failed to get block receipts")
     }
 }

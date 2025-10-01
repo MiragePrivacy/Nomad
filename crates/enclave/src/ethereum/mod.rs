@@ -11,6 +11,7 @@ use nomad_types::{
 mod buildernet;
 mod contracts;
 mod geth;
+mod proof;
 
 use contracts::{Escrow, IERC20};
 
@@ -70,9 +71,9 @@ impl EthClient {
 
     /// Get contract balances
     fn token_balances(&self, accounts: &[usize], contract: Address) -> Result<Vec<U256>> {
-        self.accounts
+        accounts
             .iter()
-            .map(|a| self.geth.erc20_balance_of(contract, *a))
+            .map(|a| self.geth.erc20_balance_of(contract, self.accounts[*a]))
             .collect()
     }
 
@@ -82,7 +83,7 @@ impl EthClient {
         let mut balances = self
             .token_balances(&accounts, signal.token_contract)?
             .into_iter()
-            .enumerate()
+            .zip(accounts)
             .collect::<Vec<_>>();
 
         // Compute minimum bond amount
@@ -101,9 +102,9 @@ impl EthClient {
         balances.sort();
         let eoa_1 = balances
             .iter()
-            .find(|(_, bal)| bal >= &bond_amount)
+            .find(|(bal, _)| bal >= &bond_amount)
             .context("failed to select eoa 1")?
-            .0;
+            .1;
 
         // find eoa 2; needs enough for escrow.
         // should have the most amount of funds for redistribution
@@ -111,17 +112,17 @@ impl EthClient {
         balances.reverse();
         let eoa_2 = balances
             .iter()
-            .find(|(i, bal)| {
+            .find(|(bal, i)| {
                 i != &eoa_1 && bal >= &signal.transfer_amount && Some(*i) != last_used_eoa_2
             })
             .or_else(|| {
                 // If we can't find an account that wasn't last used as EOA 2, fall back to any valid account
                 balances
                     .iter()
-                    .find(|(i, bal)| i != &eoa_1 && bal >= &signal.transfer_amount)
+                    .find(|(bal, i)| i != &eoa_1 && bal >= &signal.transfer_amount)
             })
             .context("failed to find eoa 2")?
-            .0;
+            .1;
 
         // Track this EOA 2 account as the last used for this token
         self.last_used_eoa_2 = Some(eoa_2);
@@ -209,7 +210,27 @@ impl EthClient {
 
     /// Collect a reward for a signal with a given eoa
     pub fn collect(&self, eoa_1: usize, signal: &Signal, transfer_tx: TxHash) -> Result<TxHash> {
-        todo!()
+        // Generate proof for the transfer transaction
+        let proof = self.generate_proof(transfer_tx, signal.recipient, signal.transfer_amount)?;
+
+        // Get the block number from the transfer transaction receipt
+        let receipt = self
+            .geth
+            .get_transaction_receipt(transfer_tx)?
+            .context("Transaction receipt not found")?;
+        let block_number = receipt
+            .block_number
+            .context("Block number not found in receipt")?;
+
+        // Call collect on the escrow contract
+        self.send_transaction(
+            eoa_1,
+            signal.escrow_contract,
+            Escrow::collectCall {
+                proof,
+                targetBlockNumber: U256::from(block_number),
+            },
+        )
     }
 
     /// Try to swap for some eth, ensuring we retain a minimum amount of tokens
