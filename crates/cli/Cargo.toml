@@ -29,10 +29,10 @@ workspace-filter = "0.1.0"
 
 # Logs, traces, and metrics
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-opentelemetry-appender-tracing = { version = "0.30" }
-opentelemetry-otlp = { version = "0.30" }
-opentelemetry_sdk = "0.30"
-opentelemetry-semantic-conventions = "0.30"
+opentelemetry-appender-tracing = { version = "0.31" }
+opentelemetry-otlp = { version = "0.31" }
+opentelemetry_sdk = "0.31"
+opentelemetry-semantic-conventions = "0.31"
 
 [build-dependencies]
 workspace-filter-build = "0.1.0"
