@@ -19,8 +19,13 @@ ftxsgx-elf2sgxs --threads $THREADS --stack-size $STACK_SIZE --heap-size $HEAP_SI
 SGXS_OUTPUT="$BUILD_OUTPUT.sgxs"
 
 VERSION=$(cargo metadata --format-version 1 | jq '.packages[] | select(.name == "nomad-enclave") | .version' -r)
-FINAL_OUTPUT="$BUILD_OUTPUT-$VERSION.sgxs"
+FINAL_OUTPUT="./nomad-enclave-$VERSION.sgxs"
 mv $SGXS_OUTPUT $FINAL_OUTPUT
-mv $FINAL_OUTPUT ${1:-.} -v
 
-# TODO: sign the enclave too
+echo "[Stage 3] Signing enclave"
+SIGNER=mirage.pem
+if [ ! -f "$SIGNER" ]; then
+  openssl genrsa -3 3072 > $SIGNER
+fi
+SIG_OUTPUT="./nomad-enclave-$VERSION.sig"
+sgxs-sign --key $SIGNER $FINAL_OUTPUT $SIG_OUTPUT -d --xfrm 7/0 --isvprodid 0 --isvsvn 0
