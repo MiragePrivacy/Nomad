@@ -1,15 +1,20 @@
-#![allow(unused)]
-
+use alloy_consensus::{SignableTransaction, TxLegacy};
+use alloy_network::{eip2718::Encodable2718, TxSignerSync};
 use alloy_signer_local::PrivateKeySigner;
+use alloy_sol_types::SolCall;
 use eyre::{bail, ContextCompat, Result};
 use nomad_types::{
-    primitives::{Address, TxHash, U256},
+    primitives::{Address, Bytes, TxHash, U256},
     Signal,
 };
 
 mod buildernet;
+mod contracts;
 mod geth;
 
+use contracts::{Escrow, IERC20};
+
+#[allow(unused)]
 /// High level attested ethereum client
 pub struct EthClient {
     keys: Vec<PrivateKeySigner>,
@@ -17,6 +22,7 @@ pub struct EthClient {
     bn: buildernet::BuildernetClient,
     geth: geth::GethClient,
     min_eth: U256,
+    chain_id: u64,
     last_used_eoa_2: Option<usize>,
 }
 
@@ -29,12 +35,18 @@ impl EthClient {
         min_eth: U256,
     ) -> Result<Self> {
         let accounts = keys.iter().map(|s| s.address()).collect();
+        let geth = geth::GethClient::new(geth_url)?;
+
+        // Fetch chain_id from geth
+        let chain_id = geth.get_chain_id()?;
+
         Ok(Self {
             keys,
             accounts,
             bn: buildernet::BuildernetClient::new(bn_atls_url, bn_rpc_url)?,
-            geth: geth::GethClient::new(geth_url)?,
+            geth,
             min_eth,
+            chain_id,
             last_used_eoa_2: None,
         })
     }
@@ -60,7 +72,7 @@ impl EthClient {
     fn token_balances(&self, accounts: &[usize], contract: Address) -> Result<Vec<U256>> {
         self.accounts
             .iter()
-            .map(|a| self.geth.erc20_balance_of(*a))
+            .map(|a| self.geth.erc20_balance_of(contract, *a))
             .collect()
     }
 
@@ -117,14 +129,82 @@ impl EthClient {
         Ok([eoa_1, eoa_2])
     }
 
+    /// Helper to build, sign, and send a transaction for a contract call
+    fn send_transaction(
+        &self,
+        eoa_index: usize,
+        to: Address,
+        call: impl SolCall,
+    ) -> Result<TxHash> {
+        let signer = &self.keys[eoa_index];
+        let from = signer.address();
+
+        // Fetch transaction parameters from geth
+        let nonce = self.geth.get_transaction_count(from)?;
+        let gas_price = self.geth.gas_price()?;
+
+        // Encode call data
+        let data = Bytes::from(call.abi_encode());
+
+        // Estimate gas
+        let gas_limit = self.geth.estimate_gas(from, to, data.clone())?;
+
+        // Build legacy transaction
+        let mut tx = TxLegacy {
+            chain_id: Some(self.chain_id),
+            nonce,
+            gas_price: gas_price.to::<u128>(),
+            gas_limit,
+            to: to.into(),
+            value: U256::ZERO,
+            input: data,
+        };
+
+        // Sign transaction
+        let signature = signer.sign_transaction_sync(&mut tx)?;
+        let signed = tx.into_signed(signature);
+
+        // Send via buildernet
+        self.bn.send_raw_transaction(signed.encoded_2718().into())
+    }
+
     /// Bond to a signal with a given eoa
     pub fn bond(&self, eoa_1: usize, signal: &Signal) -> Result<[TxHash; 2]> {
-        todo!()
+        // Compute minimum bond amount
+        let bond_amount = signal
+            .reward_amount
+            .checked_mul(U256::from(52))
+            .unwrap()
+            .checked_div(U256::from(100))
+            .unwrap();
+
+        // Approve bond amount for escrow contract, on the token contract
+        let approve_tx = self.send_transaction(
+            eoa_1,
+            signal.token_contract,
+            IERC20::approveCall {
+                spender: signal.escrow_contract,
+                value: bond_amount,
+            },
+        )?;
+
+        // Send bond call to escrow contract
+        let bond_tx =
+            self.send_transaction(eoa_1, signal.escrow_contract, Escrow::bondCall(bond_amount))?;
+
+        Ok([approve_tx, bond_tx])
     }
 
     /// Execute the transfer for a signal using a given eoa
     pub fn transfer(&self, eoa_2: usize, signal: &Signal) -> Result<TxHash> {
-        todo!()
+        self.send_transaction(
+            eoa_2,
+            signal.token_contract,
+            IERC20::transferCall {
+                to: signal.recipient,
+                value: signal.transfer_amount,
+            },
+        )
     }
 
     /// Collect a reward for a signal with a given eoa

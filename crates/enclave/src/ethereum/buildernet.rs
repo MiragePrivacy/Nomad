@@ -1,6 +1,9 @@
+use eyre::Result;
+use nomad_types::primitives::{Bytes, TxHash};
+
 pub struct BuildernetClient {
     rpc_url: String,
-    cert: String,
+    cert: Option<String>,
 }
 
 impl BuildernetClient {
@@ -9,7 +12,7 @@ impl BuildernetClient {
 
         Ok(Self {
             rpc_url,
-            cert: "".to_string(),
+            cert: None,
         })
     }
 
@@ -17,7 +20,7 @@ impl BuildernetClient {
         todo!()
     }
 
-    pub fn send_raw_transaction(_tx: Vec<u8>) {
+    pub fn send_raw_transaction(&self, _signed_tx: Bytes) -> Result<TxHash> {
         todo!()
     }
 }
