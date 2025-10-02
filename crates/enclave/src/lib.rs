@@ -125,7 +125,9 @@ impl Enclave {
         info!("Transferring funds");
         let transfer_tx = self.eth_client.transfer(eoa_2, &signal)?;
         info!("Collecting rewards");
-        let _collect_tx = self.eth_client.collect(eoa_1, &signal, transfer_tx)?;
+        let _collect_tx = self
+            .eth_client
+            .collect(&mut self.stream, eoa_1, &signal, transfer_tx)?;
         info!("Successfully executed signal");
         self.stream.write_all(&0u32.to_be_bytes())?;
         Ok(())

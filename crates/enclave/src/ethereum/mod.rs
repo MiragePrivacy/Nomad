@@ -1,4 +1,8 @@
-use std::{io::Read, net::TcpStream};
+use std::{
+    collections::HashMap,
+    io::{Read, Write},
+    net::TcpStream,
+};
 
 use alloy_consensus::{SignableTransaction, TxLegacy};
 use alloy_network::{eip2718::Encodable2718, TxSignerSync};
@@ -51,17 +55,25 @@ pub struct EthClient {
     min_eth: U256,
     chain_id: u64,
     last_used_eoa_2: Option<usize>,
+    nonces: HashMap<Address, u64>,
 }
 
 impl EthClient {
     pub fn new(keys: Vec<PrivateKeySigner>, config: EthConfig) -> Result<Self> {
-        let accounts = keys.iter().map(|s| s.address()).collect();
+        let accounts: Vec<Address> = keys.iter().map(|s| s.address()).collect();
         let geth = geth::GethClient::new(config.geth_rpc)?;
         let bn = buildernet::BuildernetClient::new(&config.builder_atls, config.builder_rpc)?;
         let min_eth = parse_ether(&config.min_eth.to_string())?;
 
         // Fetch chain_id from geth
         let chain_id = geth.get_chain_id()?;
+
+        // Load nonces for all accounts
+        let mut nonces = HashMap::new();
+        for &account in &accounts {
+            let nonce = geth.get_transaction_count(account)?;
+            nonces.insert(account, nonce);
+        }
 
         Ok(Self {
             keys,
@@ -71,6 +83,7 @@ impl EthClient {
             min_eth,
             chain_id,
             last_used_eoa_2: None,
+            nonces,
         })
     }
 
@@ -154,7 +167,7 @@ impl EthClient {
 
     /// Helper to build, sign, and send a transaction for a contract call
     fn send_transaction(
-        &self,
+        &mut self,
         eoa_index: usize,
         to: Address,
         call: impl SolCall,
@@ -162,8 +175,14 @@ impl EthClient {
         let signer = &self.keys[eoa_index];
         let from = signer.address();
 
-        // Fetch transaction parameters from geth
-        let nonce = self.geth.get_transaction_count(from)? + 1;
+        // Get and increment stored nonce
+        let nonce = self
+            .nonces
+            .get_mut(&from)
+            .context("Account nonce not found")?;
+        *nonce += 1;
+        let current_nonce = *nonce;
+
         let gas_price = self.geth.gas_price()?;
 
         // Encode call data
@@ -175,7 +194,7 @@ impl EthClient {
         // Build legacy transaction
         let mut tx = TxLegacy {
             chain_id: Some(self.chain_id),
-            nonce,
+            nonce: current_nonce,
             gas_price: gas_price.to::<u128>(),
             gas_limit,
             to: to.into(),
@@ -192,7 +211,7 @@ impl EthClient {
     }
 
     /// Bond to a signal with a given eoa
-    pub fn bond(&self, eoa_1: usize, signal: &Signal) -> Result<[TxHash; 2]> {
+    pub fn bond(&mut self, eoa_1: usize, signal: &Signal) -> Result<[TxHash; 2]> {
         // Compute minimum bond amount
         let bond_amount = signal
             .reward_amount
@@ -219,7 +238,7 @@ impl EthClient {
     }
 
     /// Execute the transfer for a signal using a given eoa
-    pub fn transfer(&self, eoa_2: usize, signal: &Signal) -> Result<TxHash> {
+    pub fn transfer(&mut self, eoa_2: usize, signal: &Signal) -> Result<TxHash> {
         self.send_transaction(
             eoa_2,
             signal.token_contract,
@@ -231,15 +250,30 @@ impl EthClient {
     }
 
     /// Collect a reward for a signal with a given eoa
-    pub fn collect(&self, eoa_1: usize, signal: &Signal, transfer_tx: TxHash) -> Result<TxHash> {
+    pub fn collect(
+        &mut self,
+        stream: &mut TcpStream,
+        eoa_1: usize,
+        signal: &Signal,
+        transfer_tx: TxHash,
+    ) -> Result<TxHash> {
         // Generate proof for the transfer transaction
         let proof = self.generate_proof(transfer_tx, signal.recipient, signal.transfer_amount)?;
 
-        // Get the block number from the transfer transaction receipt
-        let receipt = self
-            .geth
-            .get_transaction_receipt(transfer_tx)?
-            .context("Transaction receipt not found")?;
+        // Poll for the transaction receipt
+        let max_attempts = 60; // ~1 minute with 1s intervals
+        let mut receipt = None;
+        for _ in 0..max_attempts {
+            if let Some(r) = self.geth.get_transaction_receipt(transfer_tx)? {
+                receipt = Some(r);
+                break;
+            }
+            // request timeout from userspace and wait for response
+            stream.write_all(&u32::MAX.to_be_bytes())?;
+            stream.read_exact(&mut [0])?;
+        }
+        let receipt = receipt.context("Transaction receipt not found after polling")?;
+
         let block_number = receipt
             .block_number
             .context("Block number not found in receipt")?;

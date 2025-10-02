@@ -1,4 +1,4 @@
-use std::{net::SocketAddrV4, path::PathBuf};
+use std::{net::SocketAddrV4, path::PathBuf, time::Duration};
 
 use aesm_client::AesmClient;
 use alloy::primitives::Bytes;
@@ -133,16 +133,30 @@ pub async fn spawn_enclave(
         loop {
             let request = rx.recv().await.expect("signal channel closed");
             stream.write_all(&request.to_vec()).await.unwrap();
-            let len = stream
-                .read_u32()
-                .await
-                .expect("failed to read response length delimiter") as usize;
-            let mut buf = vec![0; len];
-            stream
-                .read_exact(&mut buf)
-                .await
-                .expect("failed to read reponse payload");
-            tx.send(buf).expect("failed to send response to node");
+
+            'inner: loop {
+                let len = stream
+                    .read_u32()
+                    .await
+                    .expect("failed to read response length delimiter");
+                if len == u32::MAX {
+                    // enclave requested timeout
+                    tokio::time::sleep(Duration::from_secs(10)).await;
+                    stream
+                        .write_u8(0)
+                        .await
+                        .expect("failed to send timeout release");
+                    continue 'inner;
+                }
+
+                let mut buf = vec![0; len as usize];
+                stream
+                    .read_exact(&mut buf)
+                    .await
+                    .expect("failed to read reponse payload");
+                tx.send(buf).expect("failed to send response to node");
+                break 'inner;
+            }
         }
     });
 
