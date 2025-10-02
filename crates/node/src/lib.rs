@@ -36,12 +36,6 @@ impl NomadNode {
     pub async fn init(config: config::Config) -> Result<Self> {
         let read_only = config.enclave.num_accounts < 2;
 
-        // Spawn enclave
-        let (tx, rx) = unbounded_channel();
-        let (res_tx, res_rx) = unbounded_channel();
-        let (publickey, is_debug, attestation) =
-            enclave::spawn_enclave(&config.enclave, rx, res_tx).await?;
-
         // Build eth client
         let accounts = config
             .enclave
@@ -51,6 +45,15 @@ impl NomadNode {
             .collect();
         let mut eth_client = EthClient::new(config.eth, accounts).await?;
         eth_client.enable_balance_metrics().await;
+
+        // Spawn and initialize enclave
+        let mut runner = enclave::EnclaveRunner::create_enclave(config.enclave).await?;
+        let (publickey, is_debug, attestation) = runner.initialize().await?;
+
+        // Spawn request-response handler
+        let (req_tx, req_rx) = unbounded_channel();
+        let (res_tx, res_rx) = unbounded_channel();
+        runner.spawn_handler(req_rx, res_tx);
 
         // Fetch chain ID
         let chain_id = eth_client.chain_id().await?;
@@ -91,7 +94,7 @@ impl NomadNode {
             .build();
 
         Ok(Self {
-            tx,
+            tx: req_tx,
             rx: res_rx,
             keyshare_rx,
             signal_pool,

@@ -24,6 +24,7 @@ mod quote;
 pub struct EnclaveConfig {
     /// Path to enclave sgxs file
     pub enclave_path: PathBuf,
+    pub signature_path: PathBuf,
     /// Directory path to store sealed data (key.bin, eoa.bin).
     /// Defaults to nomad config directory.
     pub seal_path: PathBuf,
@@ -50,6 +51,7 @@ impl Default for EnclaveConfig {
         let config_path: PathBuf = "~/.config/nomad/".into();
         Self {
             enclave_path: config_path.join("enclave.sgxs"),
+            signature_path: config_path.join("mirage.sig"),
             seal_path: config_path,
             nodes: vec![],
             debug_keys: vec![],
@@ -89,267 +91,287 @@ impl EnclaveRequest {
     }
 }
 
-/// Spawn the enclave, returning the attestation report for the global public key
-pub async fn spawn_enclave(
-    config: &EnclaveConfig,
-    mut rx: UnboundedReceiver<EnclaveRequest>,
-    tx: UnboundedSender<Vec<u8>>,
-) -> Result<([u8; 33], bool, Option<(Bytes, serde_json::Value)>)> {
-    #[cfg(feature = "nosgx")]
-    start_enclave()?;
+/// Userspace runner for the nomad enclave
+pub struct EnclaveRunner {
+    config: EnclaveConfig,
+    stream: TcpStream,
     #[cfg(not(feature = "nosgx"))]
-    let aesm_client = start_enclave(&config.enclave_path)?;
+    aesm_client: AesmClient,
+}
 
-    // listen for the enclave connection
-    let listener = tokio::net::TcpListener::bind(("0.0.0.0", 8888)).await?;
-    let Ok((mut stream, _)) = listener.accept().await else {
-        bail!("Failed to get enclave connection");
-    };
-    info!("Enclave connection established");
+impl EnclaveRunner {
+    /// Create and spawn the enclave in a new process, and wait for the connection.
+    /// For nosgx, the enclave is run as a blocking task in tokio.
+    pub async fn create_enclave(config: EnclaveConfig) -> Result<Self> {
+        #[cfg(not(feature = "nosgx"))]
+        let aesm_client = AesmClient::new();
 
-    init_eoa_keys(config, &mut stream)
-        .await
-        .context("failed to initialize EOA keys")?;
+        #[cfg(not(feature = "nosgx"))]
+        {
+            info!("Starting sgx enclave ...");
+            let mut device = sgxs_loaders::isgx::Device::new()
+                .unwrap()
+                .einittoken_provider(aesm_client.clone())
+                .build();
 
-    // Send ethereum config
-    let payload = serde_json::to_vec(&json!({
-        "geth_rpc": config.geth_rpc,
-        "builder_rpc": config.builder_rpc,
-        "builder_atls": config.builder_atls,
-        "min_eth": 0.05
-    }))
-    .unwrap();
-    stream.write_u32(payload.len() as u32).await?;
-    stream.write_all(&payload).await?;
+            // TODO: fetch enclave and signature if they don't exist.
+            let mut enclave_builder = enclave_runner::EnclaveBuilder::new(&config.enclave_path);
+            enclave_builder
+                .signature(&config.signature_path)?
+                .arg("localhost:8888");
+            let enclave = enclave_builder
+                .build(&mut device)
+                .map_err(|e| eyre!("Failed to build enclave: {e}"))?;
+            tokio::task::spawn_blocking(|| enclave.run().expect("uh oh, enclave crashed"));
+        }
 
-    #[cfg(feature = "nosgx")]
-    let fut = init_global_key(config, &mut stream);
-    #[cfg(not(feature = "nosgx"))]
-    let fut = init_global_key(config, &mut stream, &aesm_client);
-    let response = fut.await.context("failed to initialize global key")?;
+        #[cfg(feature = "nosgx")]
+        {
+            info!("Starting mocked enclave ...");
+            tokio::task::spawn_blocking(|| {
+                nomad_enclave::Enclave::init("localhost:8888")
+                    .expect("failed to initialize non-sgx enclave")
+                    .run()
+                    .expect("uh oh, non-sgx enclave crashed")
+            });
+        }
 
-    // Spawn tokio task to send requests into the enclave
-    tokio::spawn(async move {
-        loop {
-            let request = rx.recv().await.expect("signal channel closed");
-            stream.write_all(&request.to_vec()).await.unwrap();
+        // listen for the enclave connection
+        let listener = tokio::net::TcpListener::bind(("0.0.0.0", 8888)).await?;
+        let Ok((stream, _)) = listener.accept().await else {
+            bail!("Failed to get enclave connection");
+        };
+        info!("Enclave connection established");
 
-            'inner: loop {
-                let len = stream
-                    .read_u32()
-                    .await
-                    .expect("failed to read response length delimiter");
-                if len == u32::MAX {
-                    // enclave requested timeout
-                    tokio::time::sleep(Duration::from_secs(10)).await;
-                    stream
-                        .write_u8(0)
+        Ok(Self {
+            config,
+            stream,
+            #[cfg(not(feature = "nosgx"))]
+            aesm_client,
+        })
+    }
+
+    /// Initialize the enclave, returning the attestation report for the global public key
+    pub async fn initialize(
+        &mut self,
+    ) -> Result<([u8; 33], bool, Option<(Bytes, serde_json::Value)>)> {
+        self.init_eoa_keys()
+            .await
+            .context("failed to initialize EOA keys")?;
+
+        // Send ethereum config
+        let payload = serde_json::to_vec(&json!({
+            "geth_rpc": self.config.geth_rpc,
+            "builder_rpc": self.config.builder_rpc,
+            "builder_atls": self.config.builder_atls,
+            "min_eth": 0.05
+        }))
+        .unwrap();
+        self.stream.write_u32(payload.len() as u32).await?;
+        self.stream.write_all(&payload).await?;
+
+        let response = self
+            .init_global_key()
+            .await
+            .context("failed to initialize global key")?;
+
+        Ok(response)
+    }
+
+    /// Consume the runner and spawn a request/response handler
+    pub fn spawn_handler(
+        mut self,
+        mut rx: UnboundedReceiver<EnclaveRequest>,
+        tx: UnboundedSender<Vec<u8>>,
+    ) {
+        // Spawn tokio task to handle the enclave stream
+        tokio::spawn(async move {
+            loop {
+                let request = rx.recv().await.expect("signal channel closed");
+                self.stream.write_all(&request.to_vec()).await.unwrap();
+
+                'inner: loop {
+                    let len = self
+                        .stream
+                        .read_u32()
                         .await
-                        .expect("failed to send timeout release");
-                    continue 'inner;
+                        .expect("failed to read response length delimiter");
+
+                    // Check if enclave requested a timeout
+                    if len == u32::MAX {
+                        tokio::time::sleep(Duration::from_secs(10)).await;
+                        self.stream
+                            .write_u8(0)
+                            .await
+                            .expect("failed to send timeout release");
+                        continue 'inner;
+                    }
+
+                    // Handle enclave response
+                    let buf = if len != 0 {
+                        let mut buf = vec![0; len as usize];
+                        self.stream
+                            .read_exact(&mut buf)
+                            .await
+                            .expect("failed to read reponse payload");
+                        buf
+                    } else {
+                        Vec::new()
+                    };
+                    tx.send(buf).expect("failed to send response to node");
+                    break 'inner;
+                }
+            }
+        });
+    }
+
+    /// Initialize EOA accounts from a bootstrap account, sealed data, both, or debug only keys
+    async fn init_eoa_keys(&mut self) -> Result<()> {
+        // EOA account initialization
+        let eoa_path = self.config.seal_path.join("eoa.bin");
+        let eoa_path = eoa_path.resolve();
+        match (
+            !self.config.bootstrap_keys.is_empty(),
+            std::fs::read(&eoa_path).ok(),
+        ) {
+            // init with debug keys
+            (false, None) => {
+                self.stream.write_u8(255).await?;
+                self.stream
+                    .write_u8(self.config.debug_keys.len() as u8)
+                    .await?;
+                for key in &self.config.debug_keys {
+                    self.stream.write_all(key).await?;
+                }
+            }
+            // Initialize new EOAs with funds from bootstrap accounts
+            (true, None) => {
+                self.stream.write_u8(0).await?;
+                self.stream
+                    .write_u8(self.config.bootstrap_keys.len() as u8)
+                    .await?;
+                for key in &self.config.bootstrap_keys {
+                    self.stream.write_all(key).await?;
                 }
 
-                let mut buf = vec![0; len as usize];
-                stream
-                    .read_exact(&mut buf)
-                    .await
-                    .expect("failed to read reponse payload");
-                tx.send(buf).expect("failed to send response to node");
-                break 'inner;
+                // Read sealed keys from enclave and save to disk
+                let len = self.stream.read_u32().await? as usize;
+                let mut payload = vec![0; len];
+                self.stream.read_exact(&mut payload).await?;
+                tokio::fs::write(eoa_path, &payload).await?;
+            }
+            // Init with sealed eoa keys
+            (_, Some(data)) => {
+                self.stream.write_u8(1).await?;
+                self.stream.write_u32(data.len() as u32).await?;
+                self.stream.write_all(&data).await?;
             }
         }
-    });
 
-    Ok(response)
-}
+        // TODO: poll and bootstrap additional funds into existing eoas
+        // (true, Some(data)) => {
+        //     write.write_u8(2).await?;
+        //     write.write_u8(config.bootstrap_keys.len() as u8);
+        //     for key in &config.debug_keys {
+        //         write.write_all(key).await?;
+        //     }
+        //     write.write_u32(data.len() as u32).await?;
+        //     write.write_all(&data).await?;
+        // }
 
-/// Run the real sgx enclave
-#[cfg(not(feature = "nosgx"))]
-fn start_enclave(path: &std::path::Path) -> Result<AesmClient> {
-    use enclave_runner::EnclaveBuilder;
-    use sgxs_loaders::isgx;
+        Ok(())
+    }
 
-    info!("Starting sgx enclave ...");
-
-    let aesm_client = AesmClient::new();
-    let mut device = isgx::Device::new()
-        .unwrap()
-        .einittoken_provider(aesm_client.clone())
-        .build();
-
-    // TODO: fetch enclave and signature if they don't exist.
-    let mut enclave_builder = EnclaveBuilder::new(path);
-
-    // TODO: load MRSIGNER signature
-    enclave_builder.dummy_signature();
-
-    let enclave = enclave_builder
-        .build(&mut device)
-        .map_err(|e| eyre!("Failed to build enclave: {e}"))?;
-    tokio::task::spawn_blocking(|| enclave.run().expect("uh oh, enclave crashed"));
-    Ok(aesm_client)
-}
-
-/// Run the enclave directly with all sgx operations mocked
-#[cfg(feature = "nosgx")]
-fn start_enclave() -> Result<()> {
-    info!("Starting mocked enclave ...");
-    tokio::task::spawn_blocking(|| {
-        nomad_enclave::Enclave::init("localhost:8888")
-            .expect("failed to initialize non-sgx enclave")
-            .run()
-            .expect("uh oh, non-sgx enclave crashed")
-    });
-    Ok(())
-}
-
-/// Global key initialization routine
-async fn init_global_key(
-    config: &EnclaveConfig,
-    stream: &mut TcpStream,
-    #[cfg(not(feature = "nosgx"))] aesm_client: &AesmClient,
-) -> Result<([u8; 33], bool, Option<(Bytes, serde_json::Value)>)> {
-    let key_path = config.seal_path.join("key.bin");
-    let key_path = key_path.resolve();
-    if let Ok(data) = std::fs::read(&key_path) {
-        // Restore key from sealed data
-        stream.write_u8(2).await?;
-        stream.write_u32(data.len() as u32).await?;
-        stream.write_all(&data).await?;
-    } else {
-        if !config.nodes.is_empty() {
-            // Bootstrap from other node enclaves
-            stream.write_u8(1).await?;
-
-            // Enclave will report its client key and read the quote and collateral
-            #[cfg(feature = "nosgx")]
-            let fut = read_report_and_reply_with_quote(stream);
-            #[cfg(not(feature = "nosgx"))]
-            let fut = read_report_and_reply_with_quote(stream, aesm_client);
-            fut.await.context("failed to read report from enclave")?;
-
-            // Send enclave addresses
-            stream.write_u8(config.nodes.len() as u8).await?;
-            for addr in &config.nodes {
-                stream.write_u32(addr.ip().to_bits()).await?;
-                stream.write_u16(addr.port()).await?;
-            }
+    /// Global key initialization routine
+    async fn init_global_key(
+        &mut self,
+    ) -> Result<([u8; 33], bool, Option<(Bytes, serde_json::Value)>)> {
+        let key_path = self.config.seal_path.join("key.bin");
+        let key_path = key_path.resolve();
+        if let Ok(data) = std::fs::read(&key_path) {
+            // Restore key from sealed data
+            self.stream.write_u8(2).await?;
+            self.stream.write_u32(data.len() as u32).await?;
+            self.stream.write_all(&data).await?;
         } else {
-            // First node, generate key
-            stream.write_u8(0).await?;
-        }
+            if !self.config.nodes.is_empty() {
+                // Bootstrap from other node enclaves
+                self.stream.write_u8(1).await?;
 
-        // Read back sealed key and write to disk
-        let len = stream.read_u32().await? as usize;
-        let mut payload = vec![0; len];
-        stream.read_exact(&mut payload).await?;
-        tokio::fs::write(key_path, &payload).await?;
-    }
+                // Enclave will report its client key and read the quote and collateral
+                self.read_report_and_reply_with_quote()
+                    .await
+                    .context("failed to read report from enclave")?;
 
-    // Now that enclave has the global key, we wait for a report
-    // and quote it, returning the data for adding to the api server.
-    // The enclave will reuse this quote for bootstrapping new enclaves.
-    #[cfg(feature = "nosgx")]
-    let fut = read_report_and_reply_with_quote(stream);
-    #[cfg(not(feature = "nosgx"))]
-    let fut = read_report_and_reply_with_quote(stream, aesm_client);
-    fut.await.context("failed to read report from enclave")
-}
-
-async fn read_report_and_reply_with_quote(
-    stream: &mut TcpStream,
-    #[cfg(not(feature = "nosgx"))] aesm_client: &AesmClient,
-) -> Result<([u8; 33], bool, Option<(Bytes, serde_json::Value)>)> {
-    let len = stream.read_u32().await? as usize;
-    let mut payload = vec![0; len];
-    stream.read_exact(&mut payload).await?;
-
-    #[cfg(feature = "nosgx")]
-    {
-        // read report data directly
-        if payload.len() != 64 {
-            bail!("unexpected test public key");
-        }
-        stream.write_u32(0).await?;
-        stream.write_u32(0).await?;
-
-        Ok((
-            *arrayref::array_ref![payload, 0, 33],
-            payload[62] != 0,
-            None,
-        ))
-    }
-
-    #[cfg(not(feature = "nosgx"))]
-    {
-        use eyre::ContextCompat;
-        use serde_json::to_value;
-
-        // Read report and parse public key
-        let report = Report::try_copy_from(&payload).context("failed to decode enclave report")?;
-        let key = *arrayref::array_ref![report.reportdata, 0, 33];
-
-        // Generate a quote for the report
-        let (quote, collateral, _) = quote::get_quote_for_report(aesm_client, &report)?;
-        let collateral = to_value(collateral)?;
-        stream.write_u32(quote.len() as u32).await?;
-        stream.write_all(&quote).await?;
-        let collateral_bytes = serde_json::to_vec(&collateral)?;
-        stream.write_u32(collateral_bytes.len() as u32).await?;
-        stream.write_all(&collateral_bytes).await?;
-
-        Ok((key, report.reportdata[62] != 0, Some((quote, collateral))))
-    }
-}
-
-async fn init_eoa_keys(config: &EnclaveConfig, stream: &mut TcpStream) -> Result<()> {
-    // EOA account initialization
-    let eoa_path = config.seal_path.join("eoa.bin");
-    let eoa_path = eoa_path.resolve();
-    match (
-        !config.bootstrap_keys.is_empty(),
-        std::fs::read(&eoa_path).ok(),
-    ) {
-        // init with debug keys
-        (false, None) => {
-            stream.write_u8(255).await?;
-            stream.write_u8(config.debug_keys.len() as u8).await?;
-            for key in &config.debug_keys {
-                stream.write_all(key).await?;
-            }
-        }
-        // Initialize new EOAs with funds from bootstrap accounts
-        (true, None) => {
-            stream.write_u8(0).await?;
-            stream.write_u8(config.bootstrap_keys.len() as u8).await?;
-            for key in &config.bootstrap_keys {
-                stream.write_all(key).await?;
+                // Send enclave addresses
+                self.stream.write_u8(self.config.nodes.len() as u8).await?;
+                for addr in &self.config.nodes {
+                    self.stream.write_u32(addr.ip().to_bits()).await?;
+                    self.stream.write_u16(addr.port()).await?;
+                }
+            } else {
+                // First node, generate key
+                self.stream.write_u8(0).await?;
             }
 
-            // Read sealed keys from enclave and save to disk
-            let len = stream.read_u32().await? as usize;
+            // Read back sealed key and write to disk
+            let len = self.stream.read_u32().await? as usize;
             let mut payload = vec![0; len];
-            stream.read_exact(&mut payload).await?;
-            tokio::fs::write(eoa_path, &payload).await?;
+            self.stream.read_exact(&mut payload).await?;
+            tokio::fs::write(key_path, &payload).await?;
         }
-        // Init with sealed eoa keys
-        (_, Some(data)) => {
-            stream.write_u8(1).await?;
-            stream.write_u32(data.len() as u32).await?;
-            stream.write_all(&data).await?;
-        }
+
+        // Now that enclave has the global key, we wait for a report
+        // and quote it, returning the data for adding to the api server.
+        // The enclave will reuse this quote for bootstrapping new enclaves.
+        self.read_report_and_reply_with_quote()
+            .await
+            .context("failed to read report from enclave")
     }
 
-    // TODO: poll and bootstrap additional funds into existing eoas
-    // (true, Some(data)) => {
-    //     write.write_u8(2).await?;
-    //     write.write_u8(config.bootstrap_keys.len() as u8);
-    //     for key in &config.debug_keys {
-    //         write.write_all(key).await?;
-    //     }
-    //     write.write_u32(data.len() as u32).await?;
-    //     write.write_all(&data).await?;
-    // }
+    async fn read_report_and_reply_with_quote(
+        &mut self,
+    ) -> Result<([u8; 33], bool, Option<(Bytes, serde_json::Value)>)> {
+        let len = self.stream.read_u32().await? as usize;
+        let mut payload = vec![0; len];
+        self.stream.read_exact(&mut payload).await?;
 
-    Ok(())
+        #[cfg(feature = "nosgx")]
+        {
+            // read report data directly
+            if payload.len() != 64 {
+                bail!("unexpected test public key");
+            }
+            stream.write_u32(0).await?;
+            stream.write_u32(0).await?;
+
+            Ok((
+                *arrayref::array_ref![payload, 0, 33],
+                payload[62] != 0,
+                None,
+            ))
+        }
+
+        #[cfg(not(feature = "nosgx"))]
+        {
+            use eyre::ContextCompat;
+            use serde_json::to_value;
+
+            // Read report and parse public key
+            let report =
+                Report::try_copy_from(&payload).context("failed to decode enclave report")?;
+            let key = *arrayref::array_ref![report.reportdata, 0, 33];
+
+            // Generate a quote for the report
+            let (quote, collateral, _) = quote::get_quote_for_report(&self.aesm_client, &report)?;
+            let collateral = to_value(collateral)?;
+            self.stream.write_u32(quote.len() as u32).await?;
+            self.stream.write_all(&quote).await?;
+            let collateral_bytes = serde_json::to_vec(&collateral)?;
+            self.stream.write_u32(collateral_bytes.len() as u32).await?;
+            self.stream.write_all(&collateral_bytes).await?;
+
+            Ok((key, report.reportdata[62] != 0, Some((quote, collateral))))
+        }
+    }
 }
