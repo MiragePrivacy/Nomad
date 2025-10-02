@@ -6,11 +6,11 @@ RUN apt-get update && \
     curl https://download.01.org/intel-sgx/sgx_repo/ubuntu/intel-sgx-deb.key | apt-key add && \
     apt-get update && \
     apt-get install -y \
-    libsgx-dcap-default-qpl \
-    protobuf-compiler \
-    pkg-config \
-    libssl-dev \
-    && rm -rf /var/lib/apt/lists/*
+        libsgx-dcap-default-qpl \
+        protobuf-compiler \
+        pkg-config \
+        libssl-dev && \
+    rm -rf /var/lib/apt/lists/*
 
 FROM chef AS planner
 COPY . .
@@ -30,10 +30,11 @@ RUN apt-get update && \
     echo 'deb [arch=amd64] https://download.01.org/intel-sgx/sgx_repo/ubuntu focal main' > /etc/apt/sources.list.d/intel-sgx.list && \
     curl https://download.01.org/intel-sgx/sgx_repo/ubuntu/intel-sgx-deb.key | apt-key add && \
     apt-get update && \
-    libsgx-dcap-default-qpl \
-    ca-certificates \
-    openssl \
-    && rm -rf /var/lib/apt/lists/*
+    apt-get install -y \
+        libsgx-dcap-default-qpl \
+        ca-certificates \
+        openssl && \
+    rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app/target/release/nomad /usr/local/bin/nomad
 RUN chmod +x /usr/local/bin/nomad
 ENTRYPOINT ["/usr/local/bin/nomad"]
