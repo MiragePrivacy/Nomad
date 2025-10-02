@@ -31,8 +31,7 @@ RUN apt-get update && \
         libsgx-dcap-default-qpl \
         ca-certificates \
         openssl && \
-    sudo ln -s \
-        /usr/lib/x86_64-linux-gnu/libdcap_quoteprov.so.1 \
+    ln -s /usr/lib/x86_64-linux-gnu/libdcap_quoteprov.so.1 \
         /usr/lib/x86_64-linux-gnu/libdcap_quoteprov.so && \
     rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app/target/release/nomad /usr/local/bin/nomad
