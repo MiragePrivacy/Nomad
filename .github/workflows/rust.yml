@@ -31,10 +31,10 @@ jobs:
     - uses: actions/checkout@v4
     - uses: Swatinem/rust-cache@v2
     - run: |
-      cargo clippy -- -Dwarnings
-      cargo clippy --features nosgx -- -Dwarnings
-      cargo clippy --target x86_64-fortanix-unknown-sgx \
-        -p nomad-enclave -- -Dwarnings
+        cargo clippy -- -Dwarnings
+        cargo clippy --features nosgx -- -Dwarnings
+        cargo clippy --target x86_64-fortanix-unknown-sgx \
+          -p nomad-enclave -- -Dwarnings
 
   test:
     runs-on: ubuntu-latest
@@ -50,5 +50,5 @@ jobs:
     - uses: actions/checkout@v4
     - uses: Swatinem/rust-cache@v2
     - run: |
-      cargo build --release
-      cargo build --target x86_64-fortanix-unknown-sgx -p nomad-enclave
+        cargo build --release
+        cargo build --target x86_64-fortanix-unknown-sgx -p nomad-enclave
