@@ -1,6 +1,6 @@
 use nomad_enclave::Enclave;
 
-pub fn main() -> eyre::Result<()> {
+pub fn main() -> color_eyre::Result<()> {
     Enclave::init(
         &std::env::args()
             .next()

@@ -2,13 +2,18 @@ use alloy_consensus::{Receipt, ReceiptEnvelope, ReceiptWithBloom};
 use alloy_network::eip2718::Encodable2718;
 use alloy_rlp::{BufMut, Encodable};
 use alloy_trie::{proof::ProofRetainer, root::adjust_index_for_rlp, HashBuilder, Nibbles};
-use eyre::{bail, Result};
+use color_eyre::{
+    eyre::{bail, eyre},
+    Result,
+};
 use nomad_types::primitives::{Address, Bloom, Bytes, Log, LogData, TxHash, B256, U256};
+use tracing::instrument;
 
 use super::contracts::Escrow;
 
 impl super::EthClient {
     /// Generate a Merkle proof for a transfer transaction receipt
+    #[instrument(skip_all)]
     pub fn generate_proof(
         &self,
         transfer_tx: TxHash,
@@ -19,7 +24,7 @@ impl super::EthClient {
         let receipt = self
             .geth
             .get_transaction_receipt(transfer_tx)
-            .ok_or_else(|| eyre::eyre!("Transaction receipt not found"))?;
+            .ok_or_else(|| eyre!("Transaction receipt not found"))?;
 
         // Find the target transfer event log index
         let mut log_idx = None;
@@ -58,7 +63,7 @@ impl super::EthClient {
         // Get the block
         let block_hash = receipt
             .block_hash
-            .ok_or_else(|| eyre::eyre!("Block hash not found"))?;
+            .ok_or_else(|| eyre!("Block hash not found"))?;
         let block = self.geth.get_block_by_hash(block_hash)?;
 
         // Get all receipts in the block
@@ -113,7 +118,7 @@ impl super::EthClient {
 
         let target_tx_index = receipt
             .transaction_index
-            .ok_or_else(|| eyre::eyre!("Transaction index not found"))?
+            .ok_or_else(|| eyre!("Transaction index not found"))?
             as usize;
 
         let mut list = ordered_trie_with_encoder_for_target(

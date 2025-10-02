@@ -8,10 +8,14 @@
 
 use alloy_rpc_types_eth::{Block, TransactionReceipt};
 use alloy_sol_types::SolCall;
-use eyre::{Context, Result};
+use color_eyre::{
+    eyre::{eyre, Context},
+    Result,
+};
 use nomad_types::primitives::{Address, Bytes, TxHash, U256};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use tracing::trace;
 
 use super::contracts::{Escrow, IERC20};
 
@@ -45,7 +49,7 @@ pub struct GethClient {
 }
 
 impl GethClient {
-    pub fn new(rpc_url: String) -> eyre::Result<Self> {
+    pub fn new(rpc_url: String) -> Result<Self> {
         // TODO: connect to the rpc endpoint (with ra-tls) and cache the certificate
 
         Ok(Self {
@@ -74,12 +78,10 @@ impl GethClient {
             .context("Failed to parse RPC response")?;
 
         if let Some(error) = response.error {
-            return Err(eyre::eyre!("RPC error {}: {}", error.code, error.message));
+            return Err(eyre!("RPC error {}: {}", error.code, error.message));
         }
 
-        response
-            .result
-            .ok_or_else(|| eyre::eyre!("{:?}", response.error))
+        response.result.ok_or_else(|| eyre!("{:?}", response.error))
     }
 
     pub fn eth_balance_of(&self, account: Address) -> Result<U256> {
@@ -95,9 +97,10 @@ impl GethClient {
     }
 
     pub fn get_transaction_receipt(&self, hash: TxHash) -> Option<TransactionReceipt> {
-        self.rpc_call("eth_getTransactionReceipt", vec![format!("{:?}", hash)])
+        self.rpc_call("eth_getTransactionReceipt", vec![json!(hash)])
             .ok()
             .flatten()
+            .inspect(|v| trace!("Transaction receipt: {v:#?}"))
     }
 
     /// Get nonce for an account

@@ -3,8 +3,11 @@ use std::{
     net::{SocketAddrV4, TcpStream},
 };
 
+use color_eyre::{
+    eyre::{bail, Context},
+    Result,
+};
 use ecies::{PublicKey, SecretKey};
-use eyre::{bail, Context};
 use nomad_types::ReportBody;
 use sgx_isa::Keypolicy;
 use tracing::error;
@@ -31,7 +34,7 @@ pub fn initialize_global_secret(
     stream: &mut TcpStream,
     is_debug: bool,
     chain_id: u64,
-) -> eyre::Result<(SecretKey, PublicKey, Vec<u8>, Vec<u8>)> {
+) -> Result<(SecretKey, PublicKey, Vec<u8>, Vec<u8>)> {
     let mut mode = [0];
     stream.read_exact(&mut mode)?;
     let (secret, public) = match mode[0] {
@@ -97,7 +100,7 @@ fn generate_attestation_for_key(
     is_debug: bool,
     is_global: bool,
     chain_id: u64,
-) -> eyre::Result<(Vec<u8>, Vec<u8>)> {
+) -> Result<(Vec<u8>, Vec<u8>)> {
     // Create report data
     let data = ReportBody {
         public_key: publickey.serialize_compressed().into(),
@@ -147,7 +150,7 @@ fn generate_attestation_for_key(
 /// ```text
 /// [u8 num peers ] [ u32 ip . u16 port ... ]
 /// ```
-fn read_bootstrap_peers(stream: &mut TcpStream) -> eyre::Result<Vec<SocketAddrV4>> {
+fn read_bootstrap_peers(stream: &mut TcpStream) -> Result<Vec<SocketAddrV4>> {
     // Read u8 num peers
     let mut num_peers = [0u8];
     stream.read_exact(&mut num_peers)?;
@@ -170,7 +173,7 @@ fn fetch_global_secret(
     secret: SecretKey,
     quote: Vec<u8>,
     collateral: Vec<u8>,
-) -> eyre::Result<(SecretKey, PublicKey)> {
+) -> Result<(SecretKey, PublicKey)> {
     let client = KeyshareClient::new(secret, quote, collateral)?;
     for addr in peers {
         match client.request_key(addr) {
@@ -187,7 +190,7 @@ fn fetch_global_secret(
 }
 
 /// Read encrypted secret data from the stream and decrypt it
-fn read_and_unseal_global_secret(stream: &mut TcpStream) -> eyre::Result<(SecretKey, PublicKey)> {
+fn read_and_unseal_global_secret(stream: &mut TcpStream) -> Result<(SecretKey, PublicKey)> {
     let mut len = [0u8; 4];
     stream.read_exact(&mut len)?;
 

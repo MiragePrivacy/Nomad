@@ -2,13 +2,13 @@
 
 use aes_gcm::{aead::Aead, Aes256Gcm, KeyInit};
 use arrayref::array_ref;
+use color_eyre::{eyre::bail, Result};
 use ecies::{PublicKey, SecretKey};
-use eyre::bail;
 use sgx_isa::Keypolicy;
 use sha2::{Digest, Sha256};
 
 /// Derive a new ecies secret key with egetkey
-pub fn derive_ecies_key(label: &str) -> eyre::Result<(SecretKey, PublicKey)> {
+pub fn derive_ecies_key(label: &str) -> Result<(SecretKey, PublicKey)> {
     let data = crate::sealing::SealData::new_from_label(Keypolicy::all(), label)?;
     let key = crate::sealing::egetkey(&data)?;
     let secret = SecretKey::parse(&key)?;
@@ -20,7 +20,7 @@ pub fn derive_ecies_key(label: &str) -> eyre::Result<(SecretKey, PublicKey)> {
 /// ```text
 /// [ seal data . payload ]
 /// ```
-pub fn seal(policy: Keypolicy, label: &str, data: &[u8]) -> eyre::Result<Vec<u8>> {
+pub fn seal(policy: Keypolicy, label: &str, data: &[u8]) -> Result<Vec<u8>> {
     let seal_data = SealData::new_from_label(policy, label)?;
     let key = egetkey(&seal_data)?;
 
@@ -37,7 +37,7 @@ pub fn seal(policy: Keypolicy, label: &str, data: &[u8]) -> eyre::Result<Vec<u8>
 }
 
 /// Unseal a given payload
-pub fn unseal(policy: Keypolicy, label: &str, data: &[u8]) -> eyre::Result<Vec<u8>> {
+pub fn unseal(policy: Keypolicy, label: &str, data: &[u8]) -> Result<Vec<u8>> {
     let seal_data = SealData::from_slice(policy, label, data)?;
     let key = egetkey(&seal_data)?;
     let payload = &data[SealData::SIZE..];
@@ -59,7 +59,7 @@ struct SealData {
 impl SealData {
     const SIZE: usize = 1 + 32 + 2 + 16 + 12;
 
-    pub fn new_from_label(policy: Keypolicy, label: &str) -> eyre::Result<Self> {
+    pub fn new_from_label(policy: Keypolicy, label: &str) -> Result<Self> {
         let keyid = Sha256::digest(label).into();
         let mut nonce = [0u8; 12];
         rdrand::RdRand::new()?.try_fill_bytes(&mut nonce)?;
@@ -98,7 +98,7 @@ impl SealData {
         buf
     }
 
-    fn from_slice(policy: Keypolicy, label: &str, slice: &[u8]) -> eyre::Result<Self> {
+    fn from_slice(policy: Keypolicy, label: &str, slice: &[u8]) -> Result<Self> {
         if slice.len() < Self::SIZE {
             bail!("Invalid seal data length");
         }
@@ -130,7 +130,7 @@ impl SealData {
 
 /// Derive a sealing key for the given `seal_data` configuration
 #[cfg(target_env = "sgx")]
-fn egetkey(seal_data: &SealData) -> eyre::Result<[u8; 32]> {
+fn egetkey(seal_data: &SealData) -> Result<[u8; 32]> {
     use sgx_isa::{Keyname, Keyrequest};
     let Ok(key) = Keyrequest {
         keyname: Keyname::Seal as _,
@@ -150,6 +150,6 @@ fn egetkey(seal_data: &SealData) -> eyre::Result<[u8; 32]> {
 
 /// Derive a dummy sealing key on non sgx targets
 #[cfg(not(target_env = "sgx"))]
-fn egetkey(seal_data: &SealData) -> eyre::Result<[u8; 32]> {
+fn egetkey(seal_data: &SealData) -> Result<[u8; 32]> {
     Ok(Sha256::digest(seal_data.keyid).into())
 }

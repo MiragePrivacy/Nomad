@@ -3,8 +3,11 @@ use std::{
     net::TcpStream,
 };
 
+use color_eyre::{
+    eyre::{bail, Context, ContextCompat},
+    Result,
+};
 use ecies::SecretKey;
-use eyre::{bail, Context, ContextCompat};
 use nomad_types::Signal;
 use tracing::{error, info, instrument, warn};
 
@@ -27,7 +30,7 @@ pub struct Enclave {
 
 impl Enclave {
     #[instrument(skip_all)]
-    pub fn init(addr: &str) -> eyre::Result<Self> {
+    pub fn init(addr: &str) -> color_eyre::Result<Self> {
         // Setup crypto provider
         rustls_rustcrypto::provider()
             .install_default()
@@ -70,7 +73,7 @@ impl Enclave {
 
     /// Main thread loop
     #[instrument(name = "enclave", skip_all)]
-    pub fn run(mut self) -> eyre::Result<()> {
+    pub fn run(mut self) -> Result<()> {
         loop {
             let mut kind = [0];
             self.stream.read_exact(&mut kind)?;
@@ -84,12 +87,12 @@ impl Enclave {
     }
 
     #[instrument(name = "keyshare", skip_all)]
-    fn handle_keyshare_request(&mut self) -> eyre::Result<()> {
+    fn handle_keyshare_request(&mut self) -> Result<()> {
         self.keyshare.handle_request(&mut self.stream, &self.secret)
     }
 
     #[instrument(name = "signal", skip_all)]
-    fn handle_signal_request(&mut self) -> eyre::Result<()> {
+    fn handle_signal_request(&mut self) -> Result<()> {
         // Read u32 length prefixed signal payload from the stream
         let mut len = [0u8; 4];
         self.stream.read_exact(&mut len)?;
@@ -112,7 +115,7 @@ impl Enclave {
 
         // Execute signal
         if let Err(e) = self.execute_signal(signal) {
-            error!("Failed to execute signal: {e:#}");
+            error!("Failed to execute signal: {e:?}");
             self.stream.write_all(&0u32.to_be_bytes())?;
             return Ok(());
         }
@@ -121,7 +124,7 @@ impl Enclave {
     }
 
     #[instrument(name = "execute", skip_all, fields(signal.token_contract))]
-    fn execute_signal(&mut self, signal: Signal) -> eyre::Result<()> {
+    fn execute_signal(&mut self, signal: Signal) -> Result<()> {
         let stream = &mut self.stream;
         self.eth_client.validate_signal(&signal)?;
         info!("Selecting accounts");

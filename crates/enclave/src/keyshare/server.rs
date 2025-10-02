@@ -4,8 +4,11 @@ use std::{
     time::SystemTime,
 };
 
+use color_eyre::{
+    eyre::{ensure, eyre, Context},
+    Result,
+};
 use ecies::{PublicKey, SecretKey};
-use eyre::{ensure, eyre, Context, Result};
 use nomad_types::ReportBody;
 use ra_verify::types::{quote::SgxQuote, report::MREnclave};
 

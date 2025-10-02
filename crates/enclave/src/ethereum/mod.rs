@@ -9,7 +9,10 @@ use alloy_network::{eip2718::Encodable2718, TxSignerSync};
 use alloy_primitives::utils::parse_ether;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolCall;
-use eyre::{bail, Context, ContextCompat, Result};
+use color_eyre::{
+    eyre::{bail, Context, ContextCompat},
+    Result,
+};
 use nomad_types::{
     primitives::{Address, Bytes, TxHash, U256},
     Signal,
@@ -17,7 +20,7 @@ use nomad_types::{
 use serde::{Deserialize, Serialize};
 
 use contracts::{Escrow, IERC20};
-use tracing::info;
+use tracing::{info, trace};
 
 mod buildernet;
 mod contracts;
@@ -229,6 +232,7 @@ impl EthClient {
         let max_attempts = 60; // ~1 minute with 1s intervals
         let mut receipt = None;
         for _ in 0..max_attempts {
+            trace!("Polling transaction receipt");
             if let Some(r) = self.geth.get_transaction_receipt(tx_hash) {
                 receipt = Some(r);
                 break;
@@ -237,7 +241,12 @@ impl EthClient {
             stream.write_all(&u32::MAX.to_be_bytes())?;
             stream.read_exact(&mut [0])?;
         }
-        let _receipt = receipt.context("Transaction receipt not found after polling")?;
+
+        let receipt = receipt.context("Transaction receipt not found after polling")?;
+        trace!("Received transaction receipt for {tx_hash}");
+        if !receipt.status() {
+            bail!("Transaction failed");
+        }
 
         Ok(tx_hash)
     }
@@ -314,13 +323,13 @@ impl EthClient {
         signal: &Signal,
         transfer_tx: TxHash,
     ) -> Result<TxHash> {
-        info!("transfer tx: {transfer_tx}");
         // Generate proof for the transfer transaction
         let proof = self.generate_proof(transfer_tx, signal.recipient, signal.transfer_amount)?;
         let receipt = self.geth.get_transaction_receipt(transfer_tx).unwrap();
         let block_number = receipt
             .block_number
             .context("Block number not found in receipt")?;
+        trace!("block number {block_number}");
 
         // Call collect on the escrow contract
         self.send_transaction(

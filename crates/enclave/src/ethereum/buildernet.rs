@@ -1,4 +1,7 @@
-use eyre::{Context, Result};
+use color_eyre::{
+    eyre::{eyre, Context},
+    Result,
+};
 use nomad_types::primitives::{Bytes, TxHash};
 use serde::{Deserialize, Serialize};
 
@@ -32,7 +35,7 @@ pub struct BuildernetClient {
 }
 
 impl BuildernetClient {
-    pub fn new(_atls_url: &str, rpc_url: String) -> eyre::Result<Self> {
+    pub fn new(_atls_url: &str, rpc_url: String) -> Result<Self> {
         // TODO: connect to the atls endpoint and fetch the certificate
 
         Ok(Self {
@@ -61,12 +64,12 @@ impl BuildernetClient {
             .context("Failed to parse RPC response")?;
 
         if let Some(error) = response.error {
-            return Err(eyre::eyre!("RPC error {}: {}", error.code, error.message));
+            return Err(eyre!("RPC error {}: {}", error.code, error.message));
         }
 
         response
             .result
-            .ok_or_else(|| eyre::eyre!("rpc error: {:?}", response.error))
+            .ok_or_else(|| eyre!("rpc error: {:?}", response.error))
     }
 
     pub fn send_raw_transaction(&self, signed_tx: Bytes) -> Result<TxHash> {

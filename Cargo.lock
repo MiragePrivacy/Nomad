@@ -1588,7 +1588,6 @@ dependencies = [
  "once_cell",
  "owo-colors",
  "tracing-error",
- "url",
 ]
 
 [[package]]
@@ -4358,8 +4357,8 @@ dependencies = [
  "alloy-sol-types",
  "alloy-trie",
  "arrayref",
+ "color-eyre",
  "ecies",
- "eyre",
  "hex",
  "libsecp256k1",
  "nomad-types",

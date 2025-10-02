@@ -1,7 +1,10 @@
 use std::{net::SocketAddrV4, time::SystemTime};
 
+use color_eyre::{
+    eyre::{bail, ensure, eyre, Context},
+    Result,
+};
 use ecies::{PublicKey, SecretKey};
-use eyre::{bail, ensure, eyre, Context, Result};
 use nomad_types::{AttestResponse, KeyRequest, ReportBody};
 use ra_verify::types::{quote::SgxQuote, report::MREnclave};
 
