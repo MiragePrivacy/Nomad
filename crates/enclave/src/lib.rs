@@ -6,7 +6,7 @@ use std::{
 use ecies::SecretKey;
 use eyre::{bail, Context, ContextCompat};
 use nomad_types::Signal;
-use tracing::{error, info, instrument};
+use tracing::{error, info, instrument, warn};
 
 use crate::{
     ethereum::{EthClient, EthConfig},
@@ -69,6 +69,7 @@ impl Enclave {
     }
 
     /// Main thread loop
+    #[instrument(name = "enclave", skip_all)]
     pub fn run(mut self) -> eyre::Result<()> {
         loop {
             let mut kind = [0];
@@ -82,6 +83,7 @@ impl Enclave {
         }
     }
 
+    #[instrument(name = "keyshare", skip_all)]
     fn handle_keyshare_request(&mut self) -> eyre::Result<()> {
         self.keyshare.handle_request(&mut self.stream, &self.secret)
     }
@@ -98,10 +100,12 @@ impl Enclave {
 
         // Decrypt signal
         let Ok(bytes) = ecies::decrypt(&self.secret.serialize(), &payload) else {
+            warn!("Failed to decrypt payload, skipping");
             self.stream.write_all(&0u32.to_be_bytes())?;
             return Ok(());
         };
         let Ok(signal) = serde_json::from_slice::<Signal>(&bytes) else {
+            warn!("Failed to parse unencrypted signal, skipping");
             self.stream.write_all(&0u32.to_be_bytes())?;
             return Ok(());
         };
