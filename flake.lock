@@ -1,21 +1,5 @@
 {
   "nodes": {
-    "dcap-nixpkgs": {
-      "locked": {
-        "lastModified": 1725306487,
-        "narHash": "sha256-ib2sdxE5CFdLA0m+LrzvueF0qtXjQgMRdTWD6T8bdE0=",
-        "owner": "ozwaldorf",
-        "repo": "nixpkgs",
-        "rev": "23b2f263bba5305b7bf954c3e294523ae107cb7a",
-        "type": "github"
-      },
-      "original": {
-        "owner": "ozwaldorf",
-        "ref": "sgx-dcap-default-qpl-1.21",
-        "repo": "nixpkgs",
-        "type": "github"
-      }
-    },
     "flake-utils": {
       "locked": {
         "lastModified": 1644229661,
@@ -83,7 +67,6 @@
     },
     "root": {
       "inputs": {
-        "dcap-nixpkgs": "dcap-nixpkgs",
         "foundry": "foundry",
         "nixpkgs": "nixpkgs_2"
       }

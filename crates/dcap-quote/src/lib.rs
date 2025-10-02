@@ -40,7 +40,7 @@ mod sys {
         pub qe_identity_size: u32,
     }
 
-    #[link(name = "dcap_quoteprov")]
+    #[link(name = "dcap_quoteprov", kind = "dylib")]
     extern "C" {
         pub fn sgx_ql_get_quote_verification_collateral(
             fmspc: *const u8,
