@@ -129,11 +129,14 @@ impl GethClient {
     pub fn estimate_gas(&self, from: Address, to: Address, data: Bytes) -> Result<U256> {
         self.rpc_call(
             "eth_estimateGas",
-            vec![json!({
-                "from": from.to_string(),
-                "to": to.to_string(),
-                "data": data.to_string(),
-            })],
+            vec![
+                json!({
+                    "from": from.to_string(),
+                    "to": to.to_string(),
+                    "data": data.to_string(),
+                }),
+                json!("pending"),
+            ],
         )
         .context("Failed to estimate gas")
     }
