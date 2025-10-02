@@ -1,12 +1,7 @@
 FROM lukemathwalker/cargo-chef:latest-rust-1.89-slim AS chef
 WORKDIR /app
 RUN apt-get update && \
-    apt-get install -y curl gnupg && \
-    echo 'deb [arch=amd64] https://download.01.org/intel-sgx/sgx_repo/ubuntu focal main' > /etc/apt/sources.list.d/intel-sgx.list && \
-    curl https://download.01.org/intel-sgx/sgx_repo/ubuntu/intel-sgx-deb.key | apt-key add && \
-    apt-get update && \
     apt-get install -y \
-        libsgx-dcap-default-qpl \
         protobuf-compiler \
         pkg-config \
         libssl-dev && \
