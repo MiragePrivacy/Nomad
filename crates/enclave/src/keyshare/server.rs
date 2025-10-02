@@ -6,34 +6,43 @@ use std::{
 
 use ecies::{PublicKey, SecretKey};
 use eyre::{ensure, eyre, Context, Result};
+use nomad_types::ReportBody;
 use ra_verify::types::{quote::SgxQuote, report::MREnclave};
 
 pub struct KeyshareServer {
     quote: Vec<u8>,
     collateral: Vec<u8>,
     mrenclave: MREnclave,
-    is_debug: bool,
+    report: ReportBody,
 }
 
 impl KeyshareServer {
     /// Create a new keyshare server
     pub fn new(quote: Vec<u8>, collateral: Vec<u8>) -> Self {
         #[cfg(target_env = "sgx")]
-        let (mrenclave, is_debug) = {
+        let (mrenclave, report) = {
             let report = SgxQuote::read(&mut quote.as_slice())
                 .expect("our own quote to be valid")
                 .quote_body
                 .report_body;
-            (report.mrenclave, report.sgx_report_data_bytes[62] != 0)
+            (report.mrenclave, sgx_report_data_bytes.into())
         };
         #[cfg(not(target_env = "sgx"))]
-        let (mrenclave, is_debug) = ([42; 32], true);
+        let (mrenclave, report) = (
+            [42; 32],
+            ReportBody {
+                public_key: [128; 33].into(),
+                chain_id: 111333111,
+                is_global: true,
+                is_debug: true,
+            },
+        );
 
         Self {
             quote,
             collateral,
             mrenclave,
-            is_debug,
+            report,
         }
     }
 
@@ -58,18 +67,19 @@ impl KeyshareServer {
         )
         .map_err(|e| eyre!("Failed to verify remote attestation: {e}"))?;
 
-        // Validate report data and extract client key
-        let is_debug = report.sgx_report_data_bytes[62] != 0;
-        ensure!(is_debug == self.is_debug, "Debug states must match");
-        let is_global = report.sgx_report_data_bytes[63] != 0;
+        // Verify report data
+        let report = ReportBody::from(report.sgx_report_data_bytes);
+        let public = PublicKey::parse_compressed(&report.public_key.into())
+            .context("Received invalid public key in client attestation")?;
+        ensure!(!report.is_global, "Attestation must be for a client key");
         ensure!(
-            !is_global,
-            "Client attestation must not be for a global key"
+            report.is_debug == self.report.is_debug,
+            "Debug states must match"
         );
-
-        let public =
-            PublicKey::parse_compressed(arrayref::array_ref![report.sgx_report_data_bytes, 0, 33])
-                .context("Received invalid public key in client attestation")?;
+        ensure!(
+            report.chain_id == self.report.chain_id,
+            "Chain ids must match"
+        );
 
         // Encrypt global secret for client key
         let encrypted = ecies::encrypt(&public.serialize(), &secret.serialize())

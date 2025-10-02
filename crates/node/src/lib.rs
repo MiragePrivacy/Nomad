@@ -48,30 +48,24 @@ impl NomadNode {
 
         // Spawn and initialize enclave
         let mut runner = enclave::EnclaveRunner::create_enclave(config.enclave).await?;
-        let (publickey, is_debug, attestation) = runner.initialize().await?;
+        let (report, attestation) = runner.initialize().await?;
 
         // Spawn request-response handler
         let (req_tx, req_rx) = unbounded_channel();
         let (res_tx, res_rx) = unbounded_channel();
         runner.spawn_handler(req_rx, res_tx);
 
-        // Fetch chain ID
-        let chain_id = eth_client.chain_id().await?;
-
         // Spawn api server
-        // TODO: add attestation endpoint with report and enclave public key
         let (signal_tx, signal_rx) = unbounded_channel();
         let (keyshare_tx, keyshare_rx) = unbounded_channel();
         let _ = spawn_api_server(
             config.api,
             config.p2p.bootstrap.is_empty(),
             read_only,
+            report,
             attestation,
-            publickey,
-            is_debug,
             signal_tx,
             keyshare_tx,
-            chain_id,
         )
         .await;
 

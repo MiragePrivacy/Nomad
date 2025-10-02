@@ -2,6 +2,7 @@ use std::{net::SocketAddrV4, path::PathBuf, time::Duration};
 
 use alloy::primitives::Bytes;
 use eyre::{bail, Context, Result};
+use nomad_types::ReportBody;
 use reqwest::Url;
 use resolve_path::PathResolveExt;
 use serde::{Deserialize, Serialize};
@@ -150,9 +151,7 @@ impl EnclaveRunner {
     }
 
     /// Initialize the enclave, returning the attestation report for the global public key
-    pub async fn initialize(
-        &mut self,
-    ) -> Result<([u8; 33], bool, Option<(Bytes, serde_json::Value)>)> {
+    pub async fn initialize(&mut self) -> Result<(ReportBody, Option<(Bytes, serde_json::Value)>)> {
         self.init_eoa_keys()
             .await
             .context("failed to initialize EOA keys")?;
@@ -283,7 +282,7 @@ impl EnclaveRunner {
     /// Global key initialization routine
     async fn init_global_key(
         &mut self,
-    ) -> Result<([u8; 33], bool, Option<(Bytes, serde_json::Value)>)> {
+    ) -> Result<(ReportBody, Option<(Bytes, serde_json::Value)>)> {
         let key_path = self.config.seal_path.join("key.bin");
         let key_path = key_path.resolve();
         if let Ok(data) = std::fs::read(&key_path) {
@@ -329,7 +328,7 @@ impl EnclaveRunner {
 
     async fn read_report_and_reply_with_quote(
         &mut self,
-    ) -> Result<([u8; 33], bool, Option<(Bytes, serde_json::Value)>)> {
+    ) -> Result<(ReportBody, Option<(Bytes, serde_json::Value)>)> {
         let len = self.stream.read_u32().await? as usize;
         let mut payload = vec![0; len];
         self.stream.read_exact(&mut payload).await?;
@@ -342,12 +341,7 @@ impl EnclaveRunner {
             }
             self.stream.write_u32(0).await?;
             self.stream.write_u32(0).await?;
-
-            Ok((
-                *arrayref::array_ref![payload, 0, 33],
-                payload[62] != 0,
-                None,
-            ))
+            Ok((ReportBody::from(arrayref::array_ref![payload, 0, 64]), None))
         }
 
         #[cfg(not(feature = "nosgx"))]
@@ -358,7 +352,7 @@ impl EnclaveRunner {
             // Read report and parse public key
             let report = sgx_isa::Report::try_copy_from(&payload)
                 .context("failed to decode enclave report")?;
-            let key = *arrayref::array_ref![report.reportdata, 0, 33];
+            let data = ReportBody::from(report.reportdata);
 
             // Generate a quote for the report
             let (quote, collateral, _) = quote::get_quote_for_report(&self.aesm_client, &report)?;
@@ -369,7 +363,7 @@ impl EnclaveRunner {
             self.stream.write_u32(collateral_bytes.len() as u32).await?;
             self.stream.write_all(&collateral_bytes).await?;
 
-            Ok((key, report.reportdata[62] != 0, Some((quote, collateral))))
+            Ok((data, Some((quote, collateral))))
         }
     }
 }

@@ -1,9 +1,8 @@
 use std::{net::SocketAddrV4, time::SystemTime};
 
-use arrayref::array_ref;
 use ecies::{PublicKey, SecretKey};
 use eyre::{bail, ensure, eyre, Context, Result};
-use nomad_types::{AttestResponse, KeyRequest};
+use nomad_types::{AttestResponse, KeyRequest, ReportBody};
 use ra_verify::types::{quote::SgxQuote, report::MREnclave};
 
 pub struct KeyshareClient {
@@ -11,21 +10,38 @@ pub struct KeyshareClient {
     quote: Vec<u8>,
     collateral: Vec<u8>,
     mrenclave: MREnclave,
-    is_debug: bool,
+    report: ReportBody,
 }
 
 impl KeyshareClient {
     /// Create a new keyshare client
     pub fn new(secret: SecretKey, quote: Vec<u8>, collateral: Vec<u8>) -> Result<Self> {
-        let sgx_quote = SgxQuote::read(&mut quote.as_slice()).expect("our own quote to be valid");
-        let mrenclave = sgx_quote.quote_body.report_body.mrenclave;
-        let is_debug = sgx_quote.quote_body.report_body.sgx_report_data_bytes[62] != 0;
+        #[cfg(target_env = "sgx")]
+        let (mrenclave, report) = {
+            let sgx_quote =
+                SgxQuote::read(&mut quote.as_slice()).expect("our own quote to be valid");
+            (
+                sgx_quote.quote_body.report_body.mrenclave,
+                ReportBody::from(sgx_quote.quote_body.report_body.sgx_report_data_bytes),
+            )
+        };
+        #[cfg(not(target_env = "sgx"))]
+        let (mrenclave, report) = (
+            [42; 32],
+            ReportBody {
+                public_key: [0; 33].into(),
+                chain_id: 111333111,
+                is_debug: true,
+                is_global: false,
+            },
+        );
+
         Ok(Self {
             secret,
             quote,
             collateral,
             mrenclave,
-            is_debug,
+            report,
         })
     }
 
@@ -56,10 +72,18 @@ impl KeyshareClient {
         .map_err(|e| eyre!("Failed to verify remote attestation: {e}"))?;
 
         // Validate report data and parse public key
-        let report_data = report.sgx_report_data_bytes;
-        let public = PublicKey::parse_compressed(array_ref![report_data, 0, 33])?;
-        let is_debug = report_data[62] != 0;
-        ensure!(is_debug == self.is_debug, "Debug modes must match");
+        let report = ReportBody::from(report.sgx_report_data_bytes);
+        let public = PublicKey::parse_compressed(&report.public_key.into())
+            .context("Invalid client public key")?;
+        ensure!(report.is_global, "Attestation must be for a global key");
+        ensure!(
+            report.is_debug == self.report.is_debug,
+            "Debug modes must match"
+        );
+        ensure!(
+            report.chain_id == self.report.chain_id,
+            "Chain ids must match"
+        );
 
         // Send attestation for our client key
         let encrypted = ureq::post(format!("http://{addr}/key"))

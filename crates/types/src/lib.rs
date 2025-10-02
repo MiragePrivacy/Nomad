@@ -1,6 +1,6 @@
 use std::hash::Hash;
 
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Address, Bytes, FixedBytes, U256};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -12,6 +12,41 @@ mod selectors;
 pub use api::*;
 pub use hex_schema::*;
 pub use selectors::*;
+
+#[derive(Serialize, Deserialize, ToSchema, Clone, Copy, Debug)]
+pub struct ReportBody {
+    /// Enclave global key (extracted from quote body's enclave report)
+    #[schema(value_type = String)]
+    pub public_key: FixedBytes<33>,
+    /// Chain enclave is running on
+    pub chain_id: u32,
+    /// True if the enclave is running in debug mode
+    pub is_debug: bool,
+    /// True if the attestation is for the global key
+    pub is_global: bool,
+}
+
+impl From<[u8; 64]> for ReportBody {
+    fn from(value: [u8; 64]) -> Self {
+        Self {
+            public_key: value[0..33].try_into().unwrap(),
+            chain_id: u32::from_be_bytes(value[33..33 + 4].try_into().unwrap()),
+            is_debug: value[62] != 0,
+            is_global: value[63] != 0,
+        }
+    }
+}
+
+impl From<ReportBody> for [u8; 64] {
+    fn from(value: ReportBody) -> Self {
+        let mut buf = [0; 64];
+        buf[0..33].copy_from_slice(value.public_key.as_slice());
+        buf[33..33 + 4].copy_from_slice(&value.chain_id.to_be_bytes());
+        buf[62] = value.is_debug as u8;
+        buf[63] = value.is_global as u8;
+        buf
+    }
+}
 
 /// Fully encrypted signal payload containing a json signal encrypted with ecies for
 /// an enclave public key

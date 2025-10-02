@@ -13,7 +13,8 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 use utoipa_scalar::{Scalar, Servable};
 
 use nomad_types::{
-    primitives::Bytes, AttestResponse, Attestation, HealthResponse, KeyRequest, SignalPayload,
+    primitives::Bytes, AttestResponse, Attestation, HealthResponse, KeyRequest, ReportBody,
+    SignalPayload,
 };
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -34,7 +35,6 @@ pub struct AppState {
     pub start_time: SystemTime,
     pub is_bootstrap: bool,
     pub read_only: bool,
-    pub chain_id: u64,
 
     // attest endpoint
     pub attestation: Arc<AttestResponse>,
@@ -61,8 +61,7 @@ async fn health(State(app_state): State<AppState>) -> Json<HealthResponse> {
         kind: "nomad".to_string(),
         uptime_seconds,
         is_bootstrap: app_state.is_bootstrap,
-        read_only: app_state.read_only,
-        chain_id: app_state.chain_id,
+        is_read_only: app_state.read_only,
     })
 }
 
@@ -151,20 +150,17 @@ pub async fn spawn_api_server(
     config: ApiConfig,
     is_bootstrap: bool,
     read_only: bool,
+    report: ReportBody,
     attestation: Option<(Bytes, serde_json::Value)>,
-    publickey: [u8; 33],
-    is_debug: bool,
     signal_tx: UnboundedSender<SignalPayload>,
     keyshare_tx: UnboundedSender<(Vec<u8>, UnboundedSender<Vec<u8>>)>,
-    chain_id: u64,
 ) -> eyre::Result<()> {
     debug!(?config);
 
     // Create fixed attestation response payload
     let attestation = Arc::new(AttestResponse {
         attestation: attestation.map(|(quote, collateral)| Attestation { quote, collateral }),
-        global_key: publickey.into(),
-        is_debug,
+        report,
     });
 
     let (router, api) = OpenApiRouter::with_openapi(ApiDoc::openapi())
@@ -190,7 +186,6 @@ pub async fn spawn_api_server(
             start_time: SystemTime::now(),
             is_bootstrap,
             read_only,
-            chain_id,
             attestation,
             signal_tx,
             keyshare_tx,

@@ -54,10 +54,10 @@ impl GethClient {
         })
     }
 
-    fn rpc_call<P: Serialize, R: for<'de> Deserialize<'de>>(
+    fn rpc_call<R: for<'de> Deserialize<'de>>(
         &self,
         method: &'static str,
-        params: P,
+        params: impl Serialize,
     ) -> Result<R> {
         let request = JsonRpcRequest {
             jsonrpc: "2.0",
@@ -138,7 +138,7 @@ impl GethClient {
     /// Call contract view functions
     pub fn eth_call<C: SolCall>(&self, to: Address, data: C) -> Result<C::Return> {
         let result = self
-            .rpc_call::<_, Bytes>(
+            .rpc_call::<Bytes>(
                 "eth_call",
                 vec![
                     json!({

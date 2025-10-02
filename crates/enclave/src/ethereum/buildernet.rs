@@ -41,10 +41,10 @@ impl BuildernetClient {
         })
     }
 
-    fn rpc_call<P: Serialize, R: for<'de> Deserialize<'de>>(
+    fn rpc_call<R: for<'de> Deserialize<'de>>(
         &self,
         method: &'static str,
-        params: P,
+        params: impl Serialize,
     ) -> Result<R> {
         let request = JsonRpcRequest {
             jsonrpc: "2.0",

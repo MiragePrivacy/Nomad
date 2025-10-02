@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 
 use utoipa::ToSchema;
 
+use crate::ReportBody;
+
 /// Node health report
 #[derive(Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -18,13 +20,10 @@ pub struct HealthResponse {
     /// Time since last startup
     #[schema(example = 420)]
     pub uptime_seconds: u64,
-    /// Currently running in bootstrap mode
+    /// Is the node running in bootstrap mode
     pub is_bootstrap: bool,
-    /// Currently only broadcasting and not processing signals
-    pub read_only: bool,
-    /// Ethereum network/chain ID
-    #[schema(example = 1)]
-    pub chain_id: u64,
+    /// Is the node only broadcasting and not processing signals
+    pub is_read_only: bool,
 }
 
 /// Relay get response
@@ -39,11 +38,8 @@ pub struct RelayGetResponse {
 pub struct AttestResponse {
     /// SGX Attestation containing a quote and collateral proving the key and debug mode.
     pub attestation: Option<Attestation>,
-    /// Enclave global key (extracted from quote body's enclave report)
-    #[schema(value_type = String)]
-    pub global_key: alloy_primitives::FixedBytes<33>,
-    /// True if the enclave is running in debug mode
-    pub is_debug: bool,
+    #[serde(flatten)]
+    pub report: ReportBody,
 }
 
 #[derive(Serialize, Deserialize, ToSchema, Clone)]

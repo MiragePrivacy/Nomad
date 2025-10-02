@@ -5,6 +5,7 @@ use std::{
 
 use ecies::{PublicKey, SecretKey};
 use eyre::{bail, Context};
+use nomad_types::ReportBody;
 use sgx_isa::Keypolicy;
 use tracing::error;
 
@@ -95,25 +96,27 @@ fn generate_attestation_for_key(
     is_global: bool,
 ) -> eyre::Result<(Vec<u8>, Vec<u8>)> {
     // Create report data
-    let mut data = [0u8; 64];
-    data[0..33].copy_from_slice(&publickey.serialize_compressed());
-    data[62] = is_debug as u8;
-    data[63] = is_global as u8;
+    let data = ReportBody {
+        public_key: publickey.serialize_compressed().into(),
+        chain_id: if is_debug { 111333111 } else { 1 },
+        is_debug,
+        is_global,
+    };
 
     // Generate an attestation report for the enclave public key and eoa debug mode
     #[cfg(target_env = "sgx")]
     let report = {
         let report = sgx_isa::Report::for_target(
             &sgx_isa::Targetinfo::from(sgx_isa::Report::for_self()),
-            &data,
+            &data.into(),
         );
         let report: &[u8] = report.as_ref();
         report.to_vec()
     };
 
-    // If we're running the enclave without sgx, just send the report data instead
+    // If we're running the enclave without sgx, just send the report data directly
     #[cfg(not(target_env = "sgx"))]
-    let report = data;
+    let report: [u8; 64] = data.into();
 
     let len = (report.len() as u32).to_be_bytes();
     stream.write_all(&len)?;
