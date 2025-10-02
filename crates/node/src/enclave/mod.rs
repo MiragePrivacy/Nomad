@@ -341,7 +341,10 @@ impl EnclaveRunner {
             }
             self.stream.write_u32(0).await?;
             self.stream.write_u32(0).await?;
-            Ok((ReportBody::from(arrayref::array_ref![payload, 0, 64]), None))
+            Ok((
+                ReportBody::from(*arrayref::array_ref![payload, 0, 64]),
+                None,
+            ))
         }
 
         #[cfg(not(feature = "nosgx"))]
