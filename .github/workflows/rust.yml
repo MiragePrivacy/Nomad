@@ -32,7 +32,9 @@ jobs:
     - uses: Swatinem/rust-cache@v2
     - run: |
       cargo clippy -- -Dwarnings
-      cargo clippy --target x86_64-fortanix-unknown-sgx -p nomad-enclave
+      cargo clippy --features nosgx -- -Dwarnings
+      cargo clippy --target x86_64-fortanix-unknown-sgx \
+        -p nomad-enclave -- -Dwarnings
 
   test:
     runs-on: ubuntu-latest

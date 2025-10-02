@@ -1,14 +1,11 @@
 use std::{net::SocketAddrV4, path::PathBuf, time::Duration};
 
-use aesm_client::AesmClient;
 use alloy::primitives::Bytes;
-use eyre::{bail, eyre, Context, Result};
-
+use eyre::{bail, Context, Result};
 use reqwest::Url;
 use resolve_path::PathResolveExt;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sgx_isa::Report;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
@@ -16,6 +13,7 @@ use tokio::{
 };
 use tracing::info;
 
+#[cfg(not(feature = "nosgx"))]
 mod quote;
 
 /// Configuration for the enclave
@@ -96,7 +94,7 @@ pub struct EnclaveRunner {
     config: EnclaveConfig,
     stream: TcpStream,
     #[cfg(not(feature = "nosgx"))]
-    aesm_client: AesmClient,
+    aesm_client: aesm_client::AesmClient,
 }
 
 impl EnclaveRunner {
@@ -104,7 +102,7 @@ impl EnclaveRunner {
     /// For nosgx, the enclave is run as a blocking task in tokio.
     pub async fn create_enclave(config: EnclaveConfig) -> Result<Self> {
         #[cfg(not(feature = "nosgx"))]
-        let aesm_client = AesmClient::new();
+        let aesm_client = aesm_client::AesmClient::new();
 
         #[cfg(not(feature = "nosgx"))]
         {
@@ -121,7 +119,7 @@ impl EnclaveRunner {
                 .arg("localhost:8888");
             let enclave = enclave_builder
                 .build(&mut device)
-                .map_err(|e| eyre!("Failed to build enclave: {e}"))?;
+                .map_err(|e| eyre::eyre!("Failed to build enclave: {e}"))?;
             tokio::task::spawn_blocking(|| enclave.run().expect("uh oh, enclave crashed"));
         }
 
@@ -342,8 +340,8 @@ impl EnclaveRunner {
             if payload.len() != 64 {
                 bail!("unexpected test public key");
             }
-            stream.write_u32(0).await?;
-            stream.write_u32(0).await?;
+            self.stream.write_u32(0).await?;
+            self.stream.write_u32(0).await?;
 
             Ok((
                 *arrayref::array_ref![payload, 0, 33],
@@ -358,8 +356,8 @@ impl EnclaveRunner {
             use serde_json::to_value;
 
             // Read report and parse public key
-            let report =
-                Report::try_copy_from(&payload).context("failed to decode enclave report")?;
+            let report = sgx_isa::Report::try_copy_from(&payload)
+                .context("failed to decode enclave report")?;
             let key = *arrayref::array_ref![report.reportdata, 0, 33];
 
             // Generate a quote for the report
