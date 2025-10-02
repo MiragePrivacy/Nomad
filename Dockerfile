@@ -14,6 +14,7 @@ RUN cargo chef prepare --recipe-path recipe.json
 FROM chef AS builder
 # Build dependencies - this is the caching Docker layer!
 COPY --from=planner /app/recipe.json recipe.json
+COPY ./rust-toolchain.toml .
 RUN cargo chef cook --release --recipe-path recipe.json
 # Build real application
 COPY . .
