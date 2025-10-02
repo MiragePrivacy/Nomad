@@ -14,12 +14,13 @@ pub use hex_schema::*;
 pub use selectors::*;
 
 #[derive(Serialize, Deserialize, ToSchema, Clone, Copy, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct ReportBody {
     /// Enclave global key (extracted from quote body's enclave report)
     #[schema(value_type = String)]
     pub public_key: FixedBytes<33>,
     /// Chain enclave is running on
-    pub chain_id: u32,
+    pub chain_id: u64,
     /// True if the enclave is running in debug mode
     pub is_debug: bool,
     /// True if the attestation is for the global key
@@ -30,7 +31,7 @@ impl From<[u8; 64]> for ReportBody {
     fn from(value: [u8; 64]) -> Self {
         Self {
             public_key: value[0..33].try_into().unwrap(),
-            chain_id: u32::from_be_bytes(value[33..33 + 4].try_into().unwrap()),
+            chain_id: u64::from_be_bytes(value[33..33 + 8].try_into().unwrap()),
             is_debug: value[62] != 0,
             is_global: value[63] != 0,
         }
@@ -41,7 +42,7 @@ impl From<ReportBody> for [u8; 64] {
     fn from(value: ReportBody) -> Self {
         let mut buf = [0; 64];
         buf[0..33].copy_from_slice(value.public_key.as_slice());
-        buf[33..33 + 4].copy_from_slice(&value.chain_id.to_be_bytes());
+        buf[33..33 + 8].copy_from_slice(&value.chain_id.to_be_bytes());
         buf[62] = value.is_debug as u8;
         buf[63] = value.is_global as u8;
         buf
@@ -57,6 +58,7 @@ pub struct SignalPayload(pub Bytes);
 
 /// Decrypted signal payload containing all information required to execute
 #[derive(Deserialize, Serialize, ToSchema, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct Signal {
     /// Escrow contract to bond to and collect rewards from
     #[schema(value_type = HexAddress)]

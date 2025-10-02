@@ -53,7 +53,7 @@ impl Enclave {
 
         // Fetch, generate, or unseal the global secret
         let (secret, public, quote, collateral) =
-            keyshare::initialize_global_secret(&mut stream, is_debug)?;
+            keyshare::initialize_global_secret(&mut stream, is_debug, eth_client.chain_id())?;
 
         info!(
             "Global Enclave Key: 0x{}",

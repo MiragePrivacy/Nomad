@@ -32,7 +32,7 @@ impl KeyshareServer {
             [42; 32],
             ReportBody {
                 public_key: [128; 33].into(),
-                chain_id: 111333111,
+                chain_id: 11155111,
                 is_global: true,
                 is_debug: true,
             },

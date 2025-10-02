@@ -314,6 +314,7 @@ impl EthClient {
         signal: &Signal,
         transfer_tx: TxHash,
     ) -> Result<TxHash> {
+        info!("transfer tx: {transfer_tx}");
         // Generate proof for the transfer transaction
         let proof = self.generate_proof(transfer_tx, signal.recipient, signal.transfer_amount)?;
         let receipt = self.geth.get_transaction_receipt(transfer_tx).unwrap();
@@ -354,5 +355,9 @@ impl EthClient {
         _amount: U256,
     ) -> Result<()> {
         todo!()
+    }
+
+    pub fn chain_id(&self) -> u64 {
+        self.chain_id
     }
 }

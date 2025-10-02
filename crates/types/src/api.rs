@@ -28,6 +28,7 @@ pub struct HealthResponse {
 
 /// Relay get response
 #[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct RelayGetResponse {
     pub status: String,
     pub service: String,
@@ -52,6 +53,7 @@ pub struct Attestation {
 }
 
 #[derive(Serialize, Deserialize, ToSchema, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct KeyRequest {
     #[schema(value_type = String)]
     pub quote: Bytes,

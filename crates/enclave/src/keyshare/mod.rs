@@ -30,6 +30,7 @@ const GLOBAL_SECRET_SEAL_LABEL: &str = "mirage_global_seal_key";
 pub fn initialize_global_secret(
     stream: &mut TcpStream,
     is_debug: bool,
+    chain_id: u64,
 ) -> eyre::Result<(SecretKey, PublicKey, Vec<u8>, Vec<u8>)> {
     let mut mode = [0];
     stream.read_exact(&mut mode)?;
@@ -53,7 +54,7 @@ pub fn initialize_global_secret(
             // create a client key and generate an attestation for it
             let (client_secret, client_public) = derive_ecies_key(LOCAL_SECRET_KEY_LABEL)?;
             let (client_quote, client_collateral) =
-                generate_attestation_for_key(stream, client_public, is_debug, false)?;
+                generate_attestation_for_key(stream, client_public, is_debug, false, chain_id)?;
 
             // Read peers and fetch the secret from them
             let peers = read_bootstrap_peers(stream)?;
@@ -76,7 +77,8 @@ pub fn initialize_global_secret(
         _ => bail!("Invalid enclave startup mode"),
     };
 
-    let (quote, collateral) = generate_attestation_for_key(stream, public, is_debug, true)?;
+    let (quote, collateral) =
+        generate_attestation_for_key(stream, public, is_debug, true, chain_id)?;
     Ok((secret, public, quote, collateral))
 }
 
@@ -94,11 +96,12 @@ fn generate_attestation_for_key(
     publickey: PublicKey,
     is_debug: bool,
     is_global: bool,
+    chain_id: u64,
 ) -> eyre::Result<(Vec<u8>, Vec<u8>)> {
     // Create report data
     let data = ReportBody {
         public_key: publickey.serialize_compressed().into(),
-        chain_id: if is_debug { 111333111 } else { 1 },
+        chain_id,
         is_debug,
         is_global,
     };
