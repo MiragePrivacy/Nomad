@@ -12,7 +12,6 @@ use eyre::{Context, Result};
 use nomad_types::primitives::{Address, Bytes, TxHash, U256};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tracing::debug;
 
 use super::contracts::{Escrow, IERC20};
 
@@ -124,25 +123,22 @@ impl GethClient {
     }
 
     /// Estimate gas for a transaction
-    pub fn estimate_gas(&self, from: Address, to: Address, data: Bytes) -> Result<u64> {
-        let gas: String = self
-            .rpc_call(
-                "eth_estimateGas",
-                vec![json!({
-                    "from": from.to_string(),
-                    "to": to.to_string(),
-                    "data": data.to_string(),
-                })],
-            )
-            .context("Failed to estimate gas")?;
-
-        u64::from_str_radix(gas.trim_start_matches("0x"), 16).context("Failed to parse gas")
+    pub fn estimate_gas(&self, from: Address, to: Address, data: Bytes) -> Result<U256> {
+        self.rpc_call(
+            "eth_estimateGas",
+            vec![json!({
+                "from": from.to_string(),
+                "to": to.to_string(),
+                "data": data.to_string(),
+            })],
+        )
+        .context("Failed to estimate gas")
     }
 
-    /// Call eth_call for contract view functions
-    pub fn eth_call(&self, to: Address, data: impl SolCall) -> Result<Bytes> {
-        let result: String = self
-            .rpc_call(
+    /// Call contract view functions
+    pub fn eth_call<C: SolCall>(&self, to: Address, data: C) -> Result<C::Return> {
+        let result = self
+            .rpc_call::<_, Bytes>(
                 "eth_call",
                 vec![
                     json!({
@@ -153,33 +149,27 @@ impl GethClient {
                 ],
             )
             .context("Failed to call eth_call")?;
-
-        Ok(Bytes::from(hex::decode(result.trim_start_matches("0x"))?))
+        C::abi_decode_returns(&result).context("failed to decode response abi")
     }
 
     /// Get erc20 balance for contract
     pub fn erc20_balance_of(&self, token: Address, account: Address) -> Result<U256> {
-        let result = self.eth_call(token, IERC20::balanceOfCall(account))?;
-        Ok(U256::from_be_slice(&result))
+        self.eth_call(token, IERC20::balanceOfCall(account))
     }
 
     /// Get erc20 decimals
     pub fn _erc20_decimals(&self, token: Address) -> Result<u8> {
-        let result = self.eth_call(token, IERC20::decimalsCall {})?;
-        // Decode uint8 from 32 bytes (last byte contains the value)
-        Ok(result[31])
+        self.eth_call(token, IERC20::decimalsCall {})
     }
 
     /// Check if an escrow is bonded
     pub fn escrow_is_bonded(&self, escrow: Address) -> Result<bool> {
-        let result = self.eth_call(escrow, Escrow::is_bondedCall {})?;
-        Ok(result[result.len() - 1] != 0)
+        self.eth_call(escrow, Escrow::is_bondedCall {})
     }
 
     /// Check if an escrow is funded
     pub fn escrow_is_funded(&self, escrow: Address) -> Result<bool> {
-        let result = self.eth_call(escrow, Escrow::fundedCall)?;
-        Ok(result[result.len() - 1] != 0)
+        self.eth_call(escrow, Escrow::fundedCall)
     }
 
     /// Get chain ID
@@ -187,7 +177,6 @@ impl GethClient {
         let chain_id: String = self
             .rpc_call("eth_chainId", json!([]))
             .context("Failed to get chain ID")?;
-
         u64::from_str_radix(chain_id.trim_start_matches("0x"), 16)
             .context("Failed to parse chain ID")
     }

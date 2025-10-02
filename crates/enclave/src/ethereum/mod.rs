@@ -201,7 +201,11 @@ impl EthClient {
         let data = Bytes::from(call.abi_encode());
 
         // Estimate gas
-        let gas_limit = self.geth.estimate_gas(from, to, data.clone())?;
+        let gas_limit = self
+            .geth
+            .estimate_gas(from, to, data.clone())?
+            .try_into()
+            .context("gas estimation greater than u46::MAX")?;
 
         // Build legacy transaction
         let mut tx = TxLegacy {
