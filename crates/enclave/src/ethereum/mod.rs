@@ -9,7 +9,7 @@ use alloy_network::{eip2718::Encodable2718, TxSignerSync};
 use alloy_primitives::utils::parse_ether;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolCall;
-use eyre::{bail, ContextCompat, Result};
+use eyre::{bail, Context, ContextCompat, Result};
 use nomad_types::{
     primitives::{Address, Bytes, TxHash, U256},
     Signal,
@@ -17,6 +17,7 @@ use nomad_types::{
 use serde::{Deserialize, Serialize};
 
 use contracts::{Escrow, IERC20};
+use tracing::info;
 
 mod buildernet;
 mod contracts;
@@ -85,6 +86,16 @@ impl EthClient {
             last_used_eoa_2: None,
             nonces,
         })
+    }
+
+    pub fn validate_signal(&self, signal: &Signal) -> Result<()> {
+        if self.geth.escrow_is_bonded(signal.escrow_contract)? {
+            bail!("Contract is already bonded");
+        }
+        if !self.geth.escrow_is_funded(signal.escrow_contract)? {
+            bail!("Contract is not funded");
+        }
+        Ok(())
     }
 
     /// Get accounts above minimum eth balance, or return error if not at least 2
@@ -168,6 +179,7 @@ impl EthClient {
     /// Helper to build, sign, and send a transaction for a contract call
     fn send_transaction(
         &mut self,
+        stream: &mut TcpStream,
         eoa_index: usize,
         to: Address,
         call: impl SolCall,
@@ -180,8 +192,8 @@ impl EthClient {
             .nonces
             .get_mut(&from)
             .context("Account nonce not found")?;
-        *nonce += 1;
         let current_nonce = *nonce;
+        *nonce += 1;
 
         let gas_price = self.geth.gas_price()?;
 
@@ -207,11 +219,32 @@ impl EthClient {
         let signed = tx.into_signed(signature);
 
         // Send via buildernet
-        self.bn.send_raw_transaction(signed.encoded_2718().into())
+        let tx_hash = self.bn.send_raw_transaction(signed.encoded_2718().into())?;
+
+        // Poll for the transaction receipt
+        let max_attempts = 60; // ~1 minute with 1s intervals
+        let mut receipt = None;
+        for _ in 0..max_attempts {
+            if let Some(r) = self.geth.get_transaction_receipt(tx_hash) {
+                receipt = Some(r);
+                break;
+            }
+            // request timeout from userspace and wait for response
+            stream.write_all(&u32::MAX.to_be_bytes())?;
+            stream.read_exact(&mut [0])?;
+        }
+        let _receipt = receipt.context("Transaction receipt not found after polling")?;
+
+        Ok(tx_hash)
     }
 
     /// Bond to a signal with a given eoa
-    pub fn bond(&mut self, eoa_1: usize, signal: &Signal) -> Result<[TxHash; 2]> {
+    pub fn bond(
+        &mut self,
+        stream: &mut TcpStream,
+        eoa_1: usize,
+        signal: &Signal,
+    ) -> Result<[TxHash; 2]> {
         // Compute minimum bond amount
         let bond_amount = signal
             .reward_amount
@@ -220,26 +253,45 @@ impl EthClient {
             .checked_div(U256::from(100))
             .unwrap();
 
+        info!("Approving tokens");
+
         // Approve bond amount for escrow contract, on the token contract
-        let approve_tx = self.send_transaction(
-            eoa_1,
-            signal.token_contract,
-            IERC20::approveCall {
-                spender: signal.escrow_contract,
-                value: bond_amount,
-            },
-        )?;
+        let approve_tx = self
+            .send_transaction(
+                stream,
+                eoa_1,
+                signal.token_contract,
+                IERC20::approveCall {
+                    spender: signal.escrow_contract,
+                    value: bond_amount,
+                },
+            )
+            .context("failed to approve tokens")?;
+
+        info!("Bonding escrow");
 
         // Send bond call to escrow contract
-        let bond_tx =
-            self.send_transaction(eoa_1, signal.escrow_contract, Escrow::bondCall(bond_amount))?;
+        let bond_tx = self
+            .send_transaction(
+                stream,
+                eoa_1,
+                signal.escrow_contract,
+                Escrow::bondCall(bond_amount),
+            )
+            .context("failed to bond to contract")?;
 
         Ok([approve_tx, bond_tx])
     }
 
     /// Execute the transfer for a signal using a given eoa
-    pub fn transfer(&mut self, eoa_2: usize, signal: &Signal) -> Result<TxHash> {
+    pub fn transfer(
+        &mut self,
+        stream: &mut TcpStream,
+        eoa_2: usize,
+        signal: &Signal,
+    ) -> Result<TxHash> {
         self.send_transaction(
+            stream,
             eoa_2,
             signal.token_contract,
             IERC20::transferCall {
@@ -247,6 +299,7 @@ impl EthClient {
                 value: signal.transfer_amount,
             },
         )
+        .context("failed to transfer tokens")
     }
 
     /// Collect a reward for a signal with a given eoa
@@ -259,27 +312,14 @@ impl EthClient {
     ) -> Result<TxHash> {
         // Generate proof for the transfer transaction
         let proof = self.generate_proof(transfer_tx, signal.recipient, signal.transfer_amount)?;
-
-        // Poll for the transaction receipt
-        let max_attempts = 60; // ~1 minute with 1s intervals
-        let mut receipt = None;
-        for _ in 0..max_attempts {
-            if let Some(r) = self.geth.get_transaction_receipt(transfer_tx)? {
-                receipt = Some(r);
-                break;
-            }
-            // request timeout from userspace and wait for response
-            stream.write_all(&u32::MAX.to_be_bytes())?;
-            stream.read_exact(&mut [0])?;
-        }
-        let receipt = receipt.context("Transaction receipt not found after polling")?;
-
+        let receipt = self.geth.get_transaction_receipt(transfer_tx).unwrap();
         let block_number = receipt
             .block_number
             .context("Block number not found in receipt")?;
 
         // Call collect on the escrow contract
         self.send_transaction(
+            stream,
             eoa_1,
             signal.escrow_contract,
             Escrow::collectCall {

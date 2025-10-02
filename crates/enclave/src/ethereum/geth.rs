@@ -12,6 +12,7 @@ use eyre::{Context, Result};
 use nomad_types::primitives::{Address, Bytes, TxHash, U256};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use tracing::debug;
 
 use super::contracts::{Escrow, IERC20};
 
@@ -79,7 +80,7 @@ impl GethClient {
 
         response
             .result
-            .ok_or_else(|| eyre::eyre!("RPC response missing result"))
+            .ok_or_else(|| eyre::eyre!("{:?}", response.error))
     }
 
     pub fn eth_balance_of(&self, account: Address) -> Result<U256> {
@@ -94,9 +95,10 @@ impl GethClient {
             .context("Failed to parse balance")
     }
 
-    pub fn get_transaction_receipt(&self, hash: TxHash) -> Result<Option<TransactionReceipt>> {
+    pub fn get_transaction_receipt(&self, hash: TxHash) -> Option<TransactionReceipt> {
         self.rpc_call("eth_getTransactionReceipt", vec![format!("{:?}", hash)])
-            .context("Failed to get transaction receipt")
+            .ok()
+            .flatten()
     }
 
     /// Get nonce for an account
@@ -169,10 +171,15 @@ impl GethClient {
     }
 
     /// Check if an escrow is bonded
-    pub fn _escrow_is_bonded(&self, escrow: Address) -> Result<bool> {
+    pub fn escrow_is_bonded(&self, escrow: Address) -> Result<bool> {
         let result = self.eth_call(escrow, Escrow::is_bondedCall {})?;
-        // Decode boolean result (32 bytes, last byte is 0 or 1)
-        Ok(result.len() >= 32 && result[31] != 0)
+        Ok(result[result.len() - 1] != 0)
+    }
+
+    /// Check if an escrow is funded
+    pub fn escrow_is_funded(&self, escrow: Address) -> Result<bool> {
+        let result = self.eth_call(escrow, Escrow::fundedCall)?;
+        Ok(result[result.len() - 1] != 0)
     }
 
     /// Get chain ID
@@ -189,7 +196,7 @@ impl GethClient {
     pub fn get_block_by_hash(&self, hash: TxHash) -> Result<Block> {
         self.rpc_call(
             "eth_getBlockByHash",
-            vec![format!("{:?}", hash), "false".to_string()],
+            vec![json!(format!("{:?}", hash)), json!(false)],
         )
         .context("Failed to get block by hash")
     }

@@ -46,6 +46,7 @@ alloy_sol_macro::sol! {
         function bond(uint256) public;
         function collect(ReceiptProof calldata proof, uint256 targetBlockNumber) public;
         function is_bonded() public view returns (bool);
+        function funded() public view returns (bool);
     }
 }
 

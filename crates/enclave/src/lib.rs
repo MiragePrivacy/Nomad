@@ -118,16 +118,18 @@ impl Enclave {
 
     #[instrument(name = "execute", skip_all, fields(signal.token_contract))]
     fn execute_signal(&mut self, signal: Signal) -> eyre::Result<()> {
+        let stream = &mut self.stream;
+        self.eth_client.validate_signal(&signal)?;
         info!("Selecting accounts");
         let [eoa_1, eoa_2] = self.eth_client.select_accounts(&signal)?;
         info!("Bonding contract");
-        let [_approve_tx, _bond_tx] = self.eth_client.bond(eoa_1, &signal)?;
+        let [_approve_tx, _bond_tx] = self.eth_client.bond(stream, eoa_1, &signal)?;
         info!("Transferring funds");
-        let transfer_tx = self.eth_client.transfer(eoa_2, &signal)?;
+        let transfer_tx = self.eth_client.transfer(stream, eoa_2, &signal)?;
         info!("Collecting rewards");
         let _collect_tx = self
             .eth_client
-            .collect(&mut self.stream, eoa_1, &signal, transfer_tx)?;
+            .collect(stream, eoa_1, &signal, transfer_tx)?;
         info!("Successfully executed signal");
         self.stream.write_all(&0u32.to_be_bytes())?;
         Ok(())

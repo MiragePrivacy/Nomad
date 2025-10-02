@@ -18,7 +18,7 @@ impl super::EthClient {
         // Get transaction receipt
         let receipt = self
             .geth
-            .get_transaction_receipt(transfer_tx)?
+            .get_transaction_receipt(transfer_tx)
             .ok_or_else(|| eyre::eyre!("Transaction receipt not found"))?;
 
         // Find the target transfer event log index
