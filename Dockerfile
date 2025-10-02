@@ -1,6 +1,8 @@
 FROM lukemathwalker/cargo-chef:latest-rust-1.89-slim AS chef
 WORKDIR /app
-RUN echo 'deb [arch=amd64] https://download.01.org/intel-sgx/sgx_repo/ubuntu focal main' > /etc/apt/sources.list.d/intel-sgx.list && \
+RUN apt-get update && \
+    apt-get install -y curl gnupg && \
+    echo 'deb [arch=amd64] https://download.01.org/intel-sgx/sgx_repo/ubuntu focal main' > /etc/apt/sources.list.d/intel-sgx.list && \
     curl https://download.01.org/intel-sgx/sgx_repo/ubuntu/intel-sgx-deb.key | apt-key add && \
     apt-get update && \
     apt-get install -y \
@@ -23,7 +25,9 @@ COPY . .
 RUN cargo build --release --bin nomad
 
 FROM debian:bookworm-slim AS runtime
-RUN echo 'deb [arch=amd64] https://download.01.org/intel-sgx/sgx_repo/ubuntu focal main' > /etc/apt/sources.list.d/intel-sgx.list && \
+RUN apt-get update && \
+    apt-get install -y curl gnupg && \
+    echo 'deb [arch=amd64] https://download.01.org/intel-sgx/sgx_repo/ubuntu focal main' > /etc/apt/sources.list.d/intel-sgx.list && \
     curl https://download.01.org/intel-sgx/sgx_repo/ubuntu/intel-sgx-deb.key | apt-key add && \
     apt-get update && \
     libsgx-dcap-default-qpl \
