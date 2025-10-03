@@ -28,7 +28,7 @@ impl KeyshareServer {
                 .expect("our own quote to be valid")
                 .quote_body
                 .report_body;
-            (report.mrenclave, sgx_report_data_bytes.into())
+            (report.mrenclave, report.sgx_report_data_bytes.into())
         };
         #[cfg(not(target_env = "sgx"))]
         let (mrenclave, report) = (
