@@ -19,8 +19,8 @@ use nomad_types::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::{info, trace};
 use contracts::{Escrow, IERC20};
-use tracing::{info, trace};
 
 mod buildernet;
 mod contracts;

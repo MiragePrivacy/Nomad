@@ -10,8 +10,8 @@ use color_eyre::{
 use ecies::{PublicKey, SecretKey};
 use nomad_types::ReportBody;
 use sgx_isa::Keypolicy;
-use tracing::error;
 
+use crate::error;
 use crate::sealing::derive_ecies_key;
 use client::KeyshareClient;
 pub use server::KeyshareServer;

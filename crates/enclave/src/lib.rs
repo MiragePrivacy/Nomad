@@ -1,3 +1,5 @@
+#![feature(macro_metavar_expr)]
+
 use std::{
     io::{Read, Write},
     net::TcpStream,
@@ -9,7 +11,7 @@ use color_eyre::{
 };
 use ecies::SecretKey;
 use nomad_types::Signal;
-use tracing::{error, info, instrument, warn};
+use tracing::instrument;
 
 use crate::{
     ethereum::{EthClient, EthConfig},
@@ -20,6 +22,52 @@ mod bootstrap;
 mod ethereum;
 mod keyshare;
 mod sealing;
+
+#[macro_export]
+macro_rules! trace {
+    ($($arg:tt)*) => {{
+        #[cfg(target_env = "sgx")]
+        println!($($arg)*);
+        #[cfg(not(target_env = "sgx"))]
+        tracing::trace!( $( $arg )*);
+    }};
+}
+#[macro_export]
+macro_rules! debug {
+    ($($arg:tt)*) => {{
+        #[cfg(target_env = "sgx")]
+        println!($($arg)*);
+        #[cfg(not(target_env = "sgx"))]
+        tracing::debug!( $( $arg )*);
+    }};
+}
+#[macro_export]
+macro_rules! info {
+    ($($arg:tt)*) => {{
+        #[cfg(target_env = "sgx")]
+        println!($($arg)*);
+        #[cfg(not(target_env = "sgx"))]
+        tracing::info!( $( $arg )*);
+    }};
+}
+#[macro_export]
+macro_rules! warn {
+    ($($arg:tt)*) => {{
+        #[cfg(target_env = "sgx")]
+        eprintln!($($arg)*);
+        #[cfg(not(target_env = "sgx"))]
+        tracing::warn!( $( $arg )*);
+    }};
+}
+#[macro_export]
+macro_rules! error {
+    ($($arg:tt)*) => {{
+        #[cfg(target_env = "sgx")]
+        eprintln!($($arg)*);
+        #[cfg(not(target_env = "sgx"))]
+        tracing::error!( $( $arg )*);
+    }};
+}
 
 pub struct Enclave {
     keyshare: KeyshareServer,

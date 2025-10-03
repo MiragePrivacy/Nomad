@@ -2,10 +2,10 @@
 
 use std::{io::Read, net::TcpStream};
 
+use crate::{debug, info};
 use alloy_signer_local::PrivateKeySigner;
 use color_eyre::{eyre::bail, Result};
 use sgx_isa::Keypolicy;
-use tracing::{debug, info};
 
 const EOA_SEAL_KEY_LABEL: &str = "mirage_eoas";
 
