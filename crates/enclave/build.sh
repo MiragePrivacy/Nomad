@@ -11,7 +11,7 @@ STACK_SIZE=0x200000 # 2 MiB (rust default)
 HEAP_SIZE=0x20000000 # 512 MiB
 
 echo "[Stage 1] Building fortanix enclave"
-cargo +nightly build -p nomad-enclave --locked --release --target x86_64-fortanix-unknown-sgx
+cargo build -p nomad-enclave --locked --release --target x86_64-fortanix-unknown-sgx
 BUILD_OUTPUT="$ROOT/target/x86_64-fortanix-unknown-sgx/release/nomad-enclave"
 
 echo "[Stage 2] Converting to SGXS (threads=$THREADS, stack=$STACK_SIZE, heap=$HEAP_SIZE)"
