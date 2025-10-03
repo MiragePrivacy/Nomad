@@ -21,6 +21,7 @@ serde_json = "1.0"
 thiserror = "2.0"
 tokio = { version = "1.47", features = ["full"] }
 tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = { version = "2.5", features = ["serde"] }
 utoipa = { version = "5.4", features = ["url", "preserve_order"] }
 

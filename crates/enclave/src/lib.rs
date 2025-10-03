@@ -36,10 +36,10 @@ impl Enclave {
             .install_default()
             .ok()
             .context("Failed to setup rustcrypto tls provider")?;
+        info!("Connecting to {addr}");
 
         // Connect to the runner
-        let mut stream = TcpStream::connect(addr)
-            .with_context(|| format!("Failed to connect to userspace: {addr}"))?;
+        let mut stream = TcpStream::connect(addr)?;
 
         // Bootstrap and/or unseal node eoa accounts
         let (keys, is_debug) = bootstrap::initialize_eoas(&mut stream)?;

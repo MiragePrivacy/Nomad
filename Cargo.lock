@@ -4371,6 +4371,7 @@ dependencies = [
  "sgx-isa",
  "sha2 0.10.9",
  "tracing",
+ "tracing-subscriber",
  "ureq",
 ]
 
