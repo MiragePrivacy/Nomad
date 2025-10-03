@@ -6,86 +6,34 @@
 //! - Hidden transaction polling (buildernet wont publish until its in a block)
 //! - Transaction Receipts
 
+use std::net::SocketAddr;
+
 use alloy_rpc_types_eth::{Block, TransactionReceipt};
 use alloy_sol_types::SolCall;
-use color_eyre::{
-    eyre::{eyre, Context},
-    Result,
-};
+use color_eyre::{eyre::Context, Result};
 use nomad_types::primitives::{Address, Bytes, TxHash, U256};
-use serde::{Deserialize, Serialize};
+
 use serde_json::json;
 
 use super::contracts::{Escrow, IERC20};
-
-#[derive(Serialize)]
-struct JsonRpcRequest<T> {
-    jsonrpc: &'static str,
-    method: &'static str,
-    params: T,
-    id: u64,
-}
-
-#[derive(Deserialize)]
-struct JsonRpcResponse<T> {
-    #[allow(dead_code)]
-    jsonrpc: String,
-    result: Option<T>,
-    error: Option<JsonRpcError>,
-    #[allow(dead_code)]
-    id: u64,
-}
-
-#[derive(Deserialize, Debug)]
-struct JsonRpcError {
-    code: i64,
-    message: String,
-}
+use super::rpc::RpcClient;
 
 pub struct GethClient {
-    rpc_url: String,
-    _cert: Option<String>,
+    rpc: RpcClient,
 }
 
 impl GethClient {
-    pub fn new(rpc_url: String) -> Result<Self> {
-        // TODO: connect to the rpc endpoint (with ra-tls) and cache the certificate
-
+    pub fn new(addr: SocketAddr) -> Result<Self> {
+        // TODO: Prefetch certificate over atls
         Ok(Self {
-            rpc_url,
-            _cert: None,
+            rpc: RpcClient::new(addr, None),
         })
-    }
-
-    fn rpc_call<R: for<'de> Deserialize<'de>>(
-        &self,
-        method: &'static str,
-        params: impl Serialize,
-    ) -> Result<R> {
-        let request = JsonRpcRequest {
-            jsonrpc: "2.0",
-            method,
-            params,
-            id: 1,
-        };
-
-        let response: JsonRpcResponse<R> = ureq::post(&self.rpc_url)
-            .send_json(&request)
-            .context("Failed to send RPC request")?
-            .body_mut()
-            .read_json()
-            .context("Failed to parse RPC response")?;
-
-        if let Some(error) = response.error {
-            return Err(eyre!("RPC error {}: {}", error.code, error.message));
-        }
-
-        response.result.ok_or_else(|| eyre!("{:?}", response.error))
     }
 
     pub fn eth_balance_of(&self, account: Address) -> Result<U256> {
         let balance: String = self
-            .rpc_call(
+            .rpc
+            .call(
                 "eth_getBalance",
                 vec![format!("{:?}", account), "latest".to_string()],
             )
@@ -96,7 +44,8 @@ impl GethClient {
     }
 
     pub fn get_transaction_receipt(&self, hash: TxHash) -> Option<TransactionReceipt> {
-        self.rpc_call("eth_getTransactionReceipt", vec![json!(hash)])
+        self.rpc
+            .call("eth_getTransactionReceipt", vec![json!(hash)])
             .ok()
             .flatten()
     }
@@ -104,7 +53,8 @@ impl GethClient {
     /// Get nonce for an account
     pub fn get_transaction_count(&self, account: Address) -> Result<u64> {
         let nonce: String = self
-            .rpc_call(
+            .rpc
+            .call(
                 "eth_getTransactionCount",
                 vec![format!("{:?}", account), "latest".to_string()],
             )
@@ -115,7 +65,8 @@ impl GethClient {
     /// Get current gas price
     pub fn gas_price(&self) -> Result<U256> {
         let gas_price: String = self
-            .rpc_call("eth_gasPrice", json!([]))
+            .rpc
+            .call("eth_gasPrice", json!([]))
             .context("Failed to get gas price")?;
 
         U256::from_str_radix(gas_price.trim_start_matches("0x"), 16)
@@ -124,24 +75,26 @@ impl GethClient {
 
     /// Estimate gas for a transaction
     pub fn estimate_gas(&self, from: Address, to: Address, data: Bytes) -> Result<U256> {
-        self.rpc_call(
-            "eth_estimateGas",
-            vec![
-                json!({
-                    "from": from.to_string(),
-                    "to": to.to_string(),
-                    "data": data.to_string(),
-                }),
-                json!("pending"),
-            ],
-        )
-        .context("Failed to estimate gas")
+        self.rpc
+            .call(
+                "eth_estimateGas",
+                vec![
+                    json!({
+                        "from": from.to_string(),
+                        "to": to.to_string(),
+                        "data": data.to_string(),
+                    }),
+                    json!("pending"),
+                ],
+            )
+            .context("Failed to estimate gas")
     }
 
     /// Call contract view functions
     pub fn eth_call<C: SolCall>(&self, to: Address, data: C) -> Result<C::Return> {
         let result = self
-            .rpc_call::<Bytes>(
+            .rpc
+            .call::<Bytes>(
                 "eth_call",
                 vec![
                     json!({
@@ -178,7 +131,8 @@ impl GethClient {
     /// Get chain ID
     pub fn get_chain_id(&self) -> Result<u64> {
         let chain_id: String = self
-            .rpc_call("eth_chainId", json!([]))
+            .rpc
+            .call("eth_chainId", json!([]))
             .context("Failed to get chain ID")?;
         u64::from_str_radix(chain_id.trim_start_matches("0x"), 16)
             .context("Failed to parse chain ID")
@@ -186,16 +140,18 @@ impl GethClient {
 
     /// Get block by hash
     pub fn get_block_by_hash(&self, hash: TxHash) -> Result<Block> {
-        self.rpc_call(
-            "eth_getBlockByHash",
-            vec![json!(format!("{:?}", hash)), json!(false)],
-        )
-        .context("Failed to get block by hash")
+        self.rpc
+            .call(
+                "eth_getBlockByHash",
+                vec![json!(format!("{:?}", hash)), json!(false)],
+            )
+            .context("Failed to get block by hash")
     }
 
     /// Get all receipts for a block
     pub fn get_block_receipts(&self, block_hash: TxHash) -> Result<Vec<TransactionReceipt>> {
-        self.rpc_call("eth_getBlockReceipts", vec![format!("{:?}", block_hash)])
+        self.rpc
+            .call("eth_getBlockReceipts", vec![format!("{:?}", block_hash)])
             .context("Failed to get block receipts")
     }
 }

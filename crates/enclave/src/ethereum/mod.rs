@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     io::{Read, Write},
-    net::TcpStream,
+    net::{SocketAddr, TcpStream},
 };
 
 use alloy_consensus::{SignableTransaction, TxLegacy};
@@ -26,12 +26,13 @@ mod buildernet;
 mod contracts;
 mod geth;
 mod proof;
+mod rpc;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct EthConfig {
-    pub geth_rpc: String,
-    pub builder_rpc: String,
-    pub builder_atls: String,
+    pub geth_rpc: SocketAddr,
+    pub builder_rpc: SocketAddr,
+    pub builder_atls: SocketAddr,
     pub min_eth: f64,
 }
 
@@ -66,7 +67,7 @@ impl EthClient {
     pub fn new(keys: Vec<PrivateKeySigner>, config: EthConfig) -> Result<Self> {
         let accounts: Vec<Address> = keys.iter().map(|s| s.address()).collect();
         let geth = geth::GethClient::new(config.geth_rpc)?;
-        let bn = buildernet::BuildernetClient::new(&config.builder_atls, config.builder_rpc)?;
+        let bn = buildernet::BuildernetClient::new(config.builder_atls, config.builder_rpc)?;
         let min_eth = parse_ether(&config.min_eth.to_string())?;
 
         // Fetch chain_id from geth

@@ -1,4 +1,8 @@
-use std::{net::SocketAddrV4, path::PathBuf, time::Duration};
+use std::{
+    net::{SocketAddrV4, ToSocketAddrs},
+    path::PathBuf,
+    time::Duration,
+};
 
 use alloy::primitives::Bytes;
 use eyre::{bail, Context, Result};
@@ -59,7 +63,7 @@ impl Default for EnclaveConfig {
             geth_rpc: "https://ethereum-sepolia-rpc.publicnode.com"
                 .parse()
                 .unwrap(),
-            builder_rpc: "https://rpc.buildernet.org:443".parse().unwrap(),
+            builder_rpc: "https://rpc.buildernet.org".parse().unwrap(),
             builder_atls: "https://rpc.buildernet.org:7936".parse().unwrap(),
         }
     }
@@ -159,9 +163,9 @@ impl EnclaveRunner {
 
         // Send ethereum config
         let payload = serde_json::to_vec(&json!({
-            "geth_rpc": self.config.geth_rpc,
-            "builder_rpc": self.config.builder_rpc,
-            "builder_atls": self.config.builder_atls,
+            "geth_rpc": self.config.geth_rpc.as_str().to_socket_addrs().unwrap().next(),
+            "builder_rpc": self.config.builder_rpc.as_str().to_socket_addrs().unwrap().next(),
+            "builder_atls": self.config.builder_atls.as_str().to_socket_addrs().unwrap().next(),
             "min_eth": 0.05
         }))
         .unwrap();
