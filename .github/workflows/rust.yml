@@ -23,12 +23,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
+    - uses: nicknovitski/nix-develop@v1
     - run: cargo fmt --check
 
   clippy:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
+    - uses: nicknovitski/nix-develop@v1
     - uses: Swatinem/rust-cache@v2
     - run: |
         cargo clippy -- -Dwarnings
@@ -41,6 +43,7 @@ jobs:
     timeout-minutes: 5
     steps:
     - uses: actions/checkout@v4
+    - uses: nicknovitski/nix-develop@v1
     - uses: Swatinem/rust-cache@v2
     - run: cargo test --verbose
 
@@ -48,6 +51,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
+    - uses: nicknovitski/nix-develop@v1
     - uses: Swatinem/rust-cache@v2
     - run: |
         cargo build --release
