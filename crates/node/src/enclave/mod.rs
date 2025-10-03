@@ -117,7 +117,7 @@ impl EnclaveRunner {
             let mut enclave_builder = enclave_runner::EnclaveBuilder::new(&config.enclave_path);
             enclave_builder
                 .signature(&config.signature_path)?
-                .arg("localhost:8888");
+                .arg("127.0.0.1:8888");
             let enclave = enclave_builder
                 .build(&mut device)
                 .map_err(|e| eyre::eyre!("Failed to build enclave: {e}"))?;
