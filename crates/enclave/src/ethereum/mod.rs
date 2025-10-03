@@ -31,7 +31,9 @@ mod rpc;
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct EthConfig {
     pub geth_rpc: SocketAddr,
+    pub geth_rpc_host: String,
     pub builder_rpc: SocketAddr,
+    pub builder_rpc_host: String,
     pub builder_atls: SocketAddr,
     pub min_eth: f64,
 }
@@ -66,8 +68,12 @@ pub struct EthClient {
 impl EthClient {
     pub fn new(keys: Vec<PrivateKeySigner>, config: EthConfig) -> Result<Self> {
         let accounts: Vec<Address> = keys.iter().map(|s| s.address()).collect();
-        let geth = geth::GethClient::new(config.geth_rpc)?;
-        let bn = buildernet::BuildernetClient::new(config.builder_atls, config.builder_rpc)?;
+        let geth = geth::GethClient::new(config.geth_rpc, config.geth_rpc_host)?;
+        let bn = buildernet::BuildernetClient::new(
+            config.builder_atls,
+            config.builder_rpc,
+            config.builder_rpc_host,
+        )?;
         let min_eth = parse_ether(&config.min_eth.to_string())?;
 
         // Fetch chain_id from geth

@@ -10,10 +10,10 @@ pub struct BuildernetClient {
 }
 
 impl BuildernetClient {
-    pub fn new(_atls_url: SocketAddr, addr: SocketAddr) -> Result<Self> {
+    pub fn new(_atls_url: SocketAddr, rpc_addr: SocketAddr, rpc_url: String) -> Result<Self> {
         // TODO: connect to the atls endpoint and fetch the certificate
         Ok(Self {
-            rpc: RpcClient::new(addr, None),
+            rpc: RpcClient::new(rpc_url, rpc_addr, None),
         })
     }
 

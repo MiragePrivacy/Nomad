@@ -5,7 +5,11 @@ use color_eyre::{
     Result,
 };
 use serde::{Deserialize, Serialize};
-use ureq::{tls::TlsConfig, Agent};
+use ureq::{
+    tls::TlsConfig,
+    unversioned::{resolver::Resolver, transport::DefaultConnector},
+    Agent,
+};
 
 #[derive(Serialize)]
 struct JsonRpcRequest<T> {
@@ -32,25 +36,48 @@ struct JsonRpcError {
 }
 
 pub struct RpcClient {
-    addr: SocketAddr,
+    url: String,
     agent: Agent,
 }
 
+#[derive(Debug)]
+pub struct FixedResolver {
+    host: String,
+    dest: SocketAddr,
+}
+
+impl Resolver for FixedResolver {
+    fn resolve(
+        &self,
+        uri: &ureq::http::Uri,
+        _config: &ureq::config::Config,
+        _timeout: ureq::unversioned::transport::NextTimeout,
+    ) -> std::result::Result<ureq::unversioned::resolver::ResolvedSocketAddrs, ureq::Error> {
+        if uri.host() == Some(&self.host) {
+            let mut addrs = self.empty();
+            addrs.push(self.dest);
+            return Ok(addrs);
+        }
+        Err(ureq::Error::BadUri(uri.to_string()))
+    }
+}
+
 impl RpcClient {
-    pub fn new(addr: SocketAddr, expected_cert: Option<String>) -> Self {
+    pub fn new(host: String, dest: SocketAddr, _expected_cert: Option<String>) -> Self {
         let tls_config = TlsConfig::builder()
-            // If we don't have an expected cert, disable tls verification (debug only)
-            .disable_verification(expected_cert.is_none())
             // TODO: build root certificate store with expected cert
             .build();
 
-        // Build the request agent
-        let agent = Agent::config_builder()
-            .tls_config(tls_config)
-            .build()
-            .new_agent();
+        let url = format!("https://{host}:{}", dest.port());
 
-        Self { addr, agent }
+        // Build the request agent
+        let agent = Agent::with_parts(
+            Agent::config_builder().tls_config(tls_config).build(),
+            DefaultConnector::new(),
+            FixedResolver { host, dest },
+        );
+
+        Self { url, agent }
     }
 
     pub fn call<R: for<'de> Deserialize<'de>>(
@@ -67,7 +94,7 @@ impl RpcClient {
 
         let response = self
             .agent
-            .post(format!("https://{}", self.addr))
+            .post(&self.url)
             .send_json(&request)
             .context("Failed to send RPC request")?
             .body_mut()

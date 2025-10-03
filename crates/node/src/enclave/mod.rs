@@ -164,7 +164,9 @@ impl EnclaveRunner {
         // Send ethereum config
         let payload = serde_json::to_vec(&json!({
             "geth_rpc": self.config.geth_rpc.as_str().to_socket_addrs().unwrap().next(),
+            "geth_rpc_host": self.config.geth_rpc.host_str().unwrap(),
             "builder_rpc": self.config.builder_rpc.as_str().to_socket_addrs().unwrap().next(),
+            "builder_rpc_host": self.config.builder_rpc.host_str().unwrap(),
             "builder_atls": self.config.builder_atls.as_str().to_socket_addrs().unwrap().next(),
             "min_eth": 0.05
         }))

@@ -23,10 +23,10 @@ pub struct GethClient {
 }
 
 impl GethClient {
-    pub fn new(addr: SocketAddr) -> Result<Self> {
+    pub fn new(rpc_addr: SocketAddr, rpc_url: String) -> Result<Self> {
         // TODO: Prefetch certificate over atls
         Ok(Self {
-            rpc: RpcClient::new(addr, None),
+            rpc: RpcClient::new(rpc_url, rpc_addr, None),
         })
     }
 
