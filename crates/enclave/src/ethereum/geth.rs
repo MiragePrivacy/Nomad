@@ -15,7 +15,6 @@ use color_eyre::{
 use nomad_types::primitives::{Address, Bytes, TxHash, U256};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tracing::trace;
 
 use super::contracts::{Escrow, IERC20};
 
@@ -100,7 +99,6 @@ impl GethClient {
         self.rpc_call("eth_getTransactionReceipt", vec![json!(hash)])
             .ok()
             .flatten()
-            .inspect(|v| trace!("Transaction receipt: {v:#?}"))
     }
 
     /// Get nonce for an account
@@ -111,7 +109,6 @@ impl GethClient {
                 vec![format!("{:?}", account), "latest".to_string()],
             )
             .context("Failed to get transaction count")?;
-
         u64::from_str_radix(nonce.trim_start_matches("0x"), 16).context("Failed to parse nonce")
     }
 

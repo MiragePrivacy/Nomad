@@ -196,7 +196,7 @@ impl EnclaveRunner {
 
                     // Check if enclave requested a timeout
                     if len == u32::MAX {
-                        tokio::time::sleep(Duration::from_secs(10)).await;
+                        tokio::time::sleep(Duration::from_secs(4)).await;
                         self.stream
                             .write_u8(0)
                             .await
