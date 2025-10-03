@@ -102,9 +102,11 @@ impl EnclaveRunner {
     /// Create and spawn the enclave in a new process, and wait for the connection.
     /// For nosgx, the enclave is run as a blocking task in tokio.
     pub async fn create_enclave(config: EnclaveConfig) -> Result<Self> {
+        // Bind listener for the enclave connection
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 8888)).await?;
+
         #[cfg(not(feature = "nosgx"))]
         let aesm_client = aesm_client::AesmClient::new();
-
         #[cfg(not(feature = "nosgx"))]
         {
             info!("Starting sgx enclave ...");
@@ -135,8 +137,7 @@ impl EnclaveRunner {
             });
         }
 
-        // listen for the enclave connection
-        let listener = tokio::net::TcpListener::bind(("0.0.0.0", 8888)).await?;
+        // Accept the connection from the enclave
         let Ok((stream, _)) = listener.accept().await else {
             bail!("Failed to get enclave connection");
         };
