@@ -1,4 +1,4 @@
-alloy::sol! {
+alloy_sol_macro::sol! {
     #[sol(rpc)]
     contract IERC20 {
         event Transfer(address indexed from, address indexed to, uint256 value);
@@ -25,5 +25,33 @@ alloy::sol! {
             external view returns (uint[] memory amounts);
         function WETH() external pure returns (address);
         function factory() external pure returns (address);
+    }
+
+    #[sol(rpc)]
+    contract Escrow {
+        #[derive(serde::Deserialize, serde::Serialize)]
+        struct ReceiptProof {
+            /// RLP-encoded block header
+            bytes header;
+            /// RLP-encoded target receipt
+            bytes receipt;
+            /// Serialized MPT proof nodes
+            bytes proof;
+            /// RLP-encoded receipt index
+            bytes path;
+            /// Index of target log in receipt
+            uint256 log;
+        }
+
+        function bond(uint256) public;
+        function collect(ReceiptProof calldata proof, uint256 targetBlockNumber) public;
+        function is_bonded() public view returns (bool);
+        function funded() public view returns (bool);
+    }
+}
+
+impl std::fmt::Display for Escrow::ReceiptProof {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&serde_json::to_string_pretty(self).unwrap())
     }
 }

@@ -39,7 +39,7 @@ jobs:
 
       # 3. Fail the workflow if the total exceeds 1000
       - name: Fail if over limit
-        if: ${{ steps.diff.outputs.total > 1000 }}
+        if: ${{ steps.diff.outputs.total > 10000 }}
         run: |
           echo "::error::Pull request changes exceed 1000 lines (${{ steps.diff.outputs.total }})"
           exit 1

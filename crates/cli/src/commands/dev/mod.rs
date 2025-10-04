@@ -9,7 +9,6 @@ use nomad_ethereum::EthClient;
 use nomad_node::config::Config;
 
 mod faucet;
-mod proof;
 
 /// RPC Client for local and remote nodes
 #[derive(Parser)]
@@ -25,7 +24,6 @@ impl Display for DevArgs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.cmd {
             DevCommand::Faucet(_) => f.write_str("dev_faucet"),
-            DevCommand::Proof(_) => f.write_str("dev_proof"),
         }
     }
 }
@@ -34,8 +32,6 @@ impl Display for DevArgs {
 pub enum DevCommand {
     /// Call faucet method on a token contract for each given account
     Faucet(faucet::FaucetArgs),
-    /// Generate proof for a transaction
-    Proof(proof::ProofArgs),
 }
 
 impl DevArgs {
@@ -46,7 +42,6 @@ impl DevArgs {
         let client = EthClient::new(config.eth, signers).await?;
         match self.cmd {
             DevCommand::Faucet(args) => args.execute(client).await,
-            DevCommand::Proof(args) => args.execute(client).await,
         }
     }
 }

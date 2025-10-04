@@ -1,63 +1,64 @@
-use std::hash::{Hash, Hasher};
+use std::hash::Hash;
 
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Address, Bytes, FixedBytes, U256};
 use serde::{Deserialize, Serialize};
-use url::Url;
+use utoipa::ToSchema;
 
 pub use alloy_primitives as primitives;
 
+mod api;
 mod selectors;
 
+pub use api::*;
 pub use hex_schema::*;
 pub use selectors::*;
-use utoipa::ToSchema;
 
-#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq, Hash)]
-pub enum SignalPayload {
-    Unencrypted(Signal),
-    Encrypted(EncryptedSignal),
-    TracedUnencrypted(Signal, [u8; 16]),
-    TracedEncrypted(EncryptedSignal, [u8; 16]),
+#[derive(Serialize, Deserialize, ToSchema, Clone, Copy, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportBody {
+    /// Enclave global key (extracted from quote body's enclave report)
+    #[schema(value_type = String)]
+    pub public_key: FixedBytes<33>,
+    /// Chain enclave is running on
+    pub chain_id: u64,
+    /// True if the enclave is running in debug mode
+    pub is_debug: bool,
+    /// True if the attestation is for the global key
+    pub is_global: bool,
 }
 
-impl SignalPayload {
-    pub fn token_contract(&self) -> Address {
-        match self {
-            SignalPayload::Encrypted(EncryptedSignal { token_contract, .. })
-            | SignalPayload::Unencrypted(Signal { token_contract, .. })
-            | SignalPayload::TracedEncrypted(EncryptedSignal { token_contract, .. }, _)
-            | SignalPayload::TracedUnencrypted(Signal { token_contract, .. }, _) => *token_contract,
-        }
-    }
-
-    pub fn trace_id(&self) -> Option<[u8; 16]> {
-        match self {
-            SignalPayload::TracedEncrypted(_, trace)
-            | SignalPayload::TracedUnencrypted(_, trace) => Some(*trace),
-            _ => None,
+impl From<[u8; 64]> for ReportBody {
+    fn from(value: [u8; 64]) -> Self {
+        Self {
+            public_key: value[0..33].try_into().unwrap(),
+            chain_id: u64::from_be_bytes(value[33..33 + 8].try_into().unwrap()),
+            is_debug: value[62] != 0,
+            is_global: value[63] != 0,
         }
     }
 }
 
-/// Fully encrypted signal containing the puzzle and relay address
+impl From<ReportBody> for [u8; 64] {
+    fn from(value: ReportBody) -> Self {
+        let mut buf = [0; 64];
+        buf[0..33].copy_from_slice(value.public_key.as_slice());
+        buf[33..33 + 8].copy_from_slice(&value.chain_id.to_be_bytes());
+        buf[62] = value.is_debug as u8;
+        buf[63] = value.is_global as u8;
+        buf
+    }
+}
+
+/// Fully encrypted signal payload containing a json signal encrypted with ecies for
+/// an enclave public key
 #[derive(Deserialize, Serialize, ToSchema, Debug, Clone, PartialEq, Eq, Hash)]
-pub struct EncryptedSignal {
-    /// Token contract to transfer
-    #[schema(value_type = HexAddress)]
-    pub token_contract: Address,
-    /// Relay address for submitting puzzle solutions to
-    #[schema(example = "http://your-server.com/relay")]
-    pub relay: Url,
-    /// Hex-encoded puzzle bytes
-    #[schema(value_type = HexBytes)]
-    pub puzzle: Bytes,
-    /// Hex-encoded AES-GCM encrypted data containing a json [`Signal`]
-    #[schema(value_type = HexBytes)]
-    pub data: Bytes,
-}
+#[schema(value_type = String)]
+#[schema(pattern = r"^0x[0-9a-fA-F]*$")]
+pub struct SignalPayload(pub Bytes);
 
 /// Decrypted signal payload containing all information required to execute
 #[derive(Deserialize, Serialize, ToSchema, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct Signal {
     /// Escrow contract to bond to and collect rewards from
     #[schema(value_type = HexAddress)]
@@ -74,26 +75,10 @@ pub struct Signal {
     /// Reward amount for the node
     #[schema(value_type = U256String)]
     pub reward_amount: U256,
-    /// Acknowledgement address for submitting the receipt to
-    #[schema(example = "http://your-server.com/ack")]
-    pub acknowledgement_url: Url,
     /// Optional mappings for an obfuscated contract
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(default = "null")]
     pub selector_mapping: Option<SelectorMapping>,
-}
-
-impl Hash for Signal {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.escrow_contract.hash(state);
-        self.token_contract.hash(state);
-        self.recipient.hash(state);
-        self.transfer_amount.hash(state);
-        self.reward_amount.hash(state);
-        self.acknowledgement_url.hash(state);
-        // deliberately exclude selector_mapping from hash
-        // this way signals are deduplicated based on core content, not obfuscation
-    }
 }
 
 impl std::fmt::Display for Signal {

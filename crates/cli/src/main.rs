@@ -1,6 +1,6 @@
 use std::{net::IpAddr, path::PathBuf};
 
-use alloy::signers::local::PrivateKeySigner;
+use alloy::{primitives::Bytes, signers::local::PrivateKeySigner};
 use clap::{ArgAction, Parser};
 use color_eyre::eyre::{bail, Context, Result};
 use opentelemetry::KeyValue;
@@ -38,7 +38,7 @@ pub(crate) struct Cli {
 
     /// Ethereum private keys to use
     #[arg(long, global = true, action(ArgAction::Append), display_order(0))]
-    pub pk: Option<Vec<String>>,
+    pub pk: Option<Vec<Bytes>>,
 
     /// Increases the level of verbosity. Max value is -vvvv.
     ///
@@ -84,7 +84,7 @@ impl Cli {
             cli_keys.clone()
         } else {
             // Otherwise, use config keys
-            config.private_keys.clone()
+            config.enclave.debug_keys.clone()
         };
 
         if keys.is_empty() {
@@ -96,7 +96,8 @@ impl Cli {
 
         keys.iter()
             .map(|s| {
-                s.parse::<PrivateKeySigner>()
+                s.to_string()
+                    .parse::<PrivateKeySigner>()
                     .inspect(|v| {
                         info!("Using Ethereum Account: {}", v.address());
                     })
@@ -229,17 +230,9 @@ impl Cli {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let cli = Cli::parse();
-
-    let mut hook = color_eyre::config::HookBuilder::new()
+    color_eyre::config::HookBuilder::new()
         .display_env_section(false)
-        .display_location_section(false);
-    if matches!(cli.cmd, commands::Command::Run(_)) {
-        hook = hook
-            .issue_url(concat!(env!("CARGO_PKG_REPOSITORY"), "/issues/new"))
-            .add_issue_metadata("version", env!("CARGO_PKG_VERSION"));
-    }
-    hook.install()?;
-
-    cli.execute().await
+        .display_location_section(false)
+        .install()?;
+    Cli::parse().execute().await
 }

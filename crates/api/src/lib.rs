@@ -1,23 +1,21 @@
-use std::time::SystemTime;
+use std::{sync::Arc, time::SystemTime};
 
-use axum::{
-    extract::State,
-    http::{HeaderMap, StatusCode},
-    Json,
-};
+use axum::{extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
-use tokio::{net::TcpListener, sync::mpsc::UnboundedSender};
+use tokio::{
+    net::TcpListener,
+    sync::mpsc::{unbounded_channel, UnboundedSender},
+};
 use tower_http::cors::{self, CorsLayer};
 use tracing::{debug, info};
-
-use nomad_types::{primitives::hex, SignalPayload};
 use utoipa::OpenApi;
 use utoipa_axum::{router::OpenApiRouter, routes};
 use utoipa_scalar::{Scalar, Servable};
 
-pub mod types;
-
-use crate::types::{HealthResponse, RelayGetResponse, SignalRequest};
+use nomad_types::{
+    primitives::Bytes, AttestResponse, Attestation, HealthResponse, KeyRequest, ReportBody,
+    SignalPayload,
+};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
@@ -33,17 +31,27 @@ impl Default for ApiConfig {
 
 #[derive(Clone)]
 pub struct AppState {
-    pub signal_tx: UnboundedSender<SignalPayload>,
+    // health endpoint
     pub start_time: SystemTime,
     pub is_bootstrap: bool,
     pub read_only: bool,
+
+    // attest endpoint
+    pub attestation: Arc<AttestResponse>,
+
+    // signal endpoint
+    pub signal_tx: UnboundedSender<SignalPayload>,
+
+    // keyshare endpoint
+    pub keyshare_tx: UnboundedSender<(Vec<u8>, UnboundedSender<Vec<u8>>)>,
 }
 
+const NOMAD_TAG: &str = "nomad";
+
+/// Node Status
 #[utoipa::path(
-    get, path = "/health",
-    responses(
-        (status = OK, body = HealthResponse)
-    )
+    get, path = "/", tag = NOMAD_TAG,
+    responses((status = OK, body = HealthResponse))
 )]
 async fn health(State(app_state): State<AppState>) -> Json<HealthResponse> {
     let uptime_seconds = app_state.start_time.elapsed().unwrap_or_default().as_secs();
@@ -53,13 +61,66 @@ async fn health(State(app_state): State<AppState>) -> Json<HealthResponse> {
         kind: "nomad".to_string(),
         uptime_seconds,
         is_bootstrap: app_state.is_bootstrap,
-        read_only: app_state.read_only,
+        is_read_only: app_state.read_only,
     })
 }
 
+/// Enclave Attestation
+#[utoipa::path(
+    get, path = "/attest",
+    tag = NOMAD_TAG,
+    responses((
+        status = OK,
+        body = AttestResponse,
+    ))
+)]
+async fn attest(State(app_state): State<AppState>) -> (StatusCode, Json<AttestResponse>) {
+    (StatusCode::OK, Json((*app_state.attestation).clone()))
+}
+
+#[utoipa::path(
+    post, path = "/key",
+    tag = NOMAD_TAG,
+    request_body = Vec<u8>,
+    responses(
+        (status = OK, body = Vec<u8>, description = "Encrypted global key"),
+        (status = BAD_REQUEST, body = str, description = "Invalid client enclave attestation"),
+        (status = INTERNAL_SERVER_ERROR, body = str, description = "Failed to send request to enclave")
+    )
+)]
+async fn keyshare(
+    State(app_state): State<AppState>,
+    Json(request): Json<KeyRequest>,
+) -> (StatusCode, Vec<u8>) {
+    // TODO: validate client attestation ahead of time to avoid wasting enclave resources
+
+    let (tx, mut rx) = unbounded_channel();
+    if app_state
+        .keyshare_tx
+        .send((request.quote.into(), tx))
+        .is_err()
+    {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            b"Failed to send request to enclave".to_vec(),
+        );
+    }
+
+    // Read response from enclave
+    match rx.recv().await {
+        Some(response) => (StatusCode::OK, response),
+        None => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            b"Failed to get keyshare response from enclave".to_vec(),
+        ),
+    }
+}
+
+/// Submit Signals
 #[utoipa::path(
     post, path = "/signal",
-    request_body = SignalRequest,
+    tag = NOMAD_TAG,
+    request_body = SignalPayload,
     responses(
         (status = OK, body = str, description = "Signal acknowledged"),
         (status = BAD_REQUEST, body = str, description = "Signal puzzle must have at least 500 bytes"),
@@ -68,75 +129,9 @@ async fn health(State(app_state): State<AppState>) -> Json<HealthResponse> {
 )]
 async fn signal(
     State(app_state): State<AppState>,
-    headers: HeaderMap,
-    Json(req): Json<SignalRequest>,
+    Json(req): Json<SignalPayload>,
 ) -> (StatusCode, String) {
-    // Validate signal
-    if let SignalRequest::Encrypted(signal) = &req {
-        // Ensure relay status is expected
-        let res = reqwest::Client::new()
-            .get(signal.relay.clone())
-            .send()
-            .await
-            .and_then(|r| r.error_for_status());
-        match res {
-            Ok(r) => match r.json::<RelayGetResponse>().await {
-                Ok(r) => {
-                    if &r.status != "ok" || &r.service != "relay" {
-                        return (
-                            StatusCode::BAD_REQUEST,
-                            format!("Unexpected relay status, got: {r:?}"),
-                        );
-                    }
-                }
-                Err(e) => {
-                    return (
-                        StatusCode::BAD_REQUEST,
-                        format!("Failed to read relay status: {e}"),
-                    )
-                }
-            },
-            Err(e) => {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    format!("Invalid relay status response: {e}"),
-                )
-            }
-        };
-
-        // simple check to make sure we have 12 byte nonce + some encrypted data in the signal
-        if signal.data.len() < 24 {
-            return (
-                StatusCode::BAD_REQUEST,
-                "Encrypted data is not big enough for the nonce and signal data".to_string(),
-            );
-        }
-
-        // simple check to make sure the puzzle is at least 500 bytes
-        if signal.puzzle.len() < 500 {
-            return (
-                StatusCode::BAD_REQUEST,
-                "Signal puzzle must have at least 500 bytes".to_string(),
-            );
-        }
-    }
-
-    let signal = (|| {
-        if let Some(id) = headers.get("trace_id") {
-            if let Ok(id) = id.to_str().map(|s| s.trim_start_matches("0x")) {
-                if let Ok(bytes) = hex::decode(id) {
-                    if bytes.len() == 16 {
-                        info!("Received signal with trace id: {id}");
-                        return req.traced(bytes);
-                    }
-                }
-            }
-        }
-        info!("Received signal");
-        req.untraced()
-    })();
-
-    if app_state.signal_tx.send(signal).is_err() {
+    if app_state.signal_tx.send(req).is_err() {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             "Failed to broadcast signal".to_string(),
@@ -147,19 +142,32 @@ async fn signal(
 }
 
 #[derive(OpenApi)]
-#[openapi()]
+#[openapi(tags((name = NOMAD_TAG, description = "Nomad node api")))]
 struct ApiDoc;
 
+#[allow(clippy::too_many_arguments)]
 pub async fn spawn_api_server(
     config: ApiConfig,
     is_bootstrap: bool,
     read_only: bool,
+    report: ReportBody,
+    attestation: Option<(Bytes, serde_json::Value)>,
     signal_tx: UnboundedSender<SignalPayload>,
+    keyshare_tx: UnboundedSender<(Vec<u8>, UnboundedSender<Vec<u8>>)>,
 ) -> eyre::Result<()> {
     debug!(?config);
 
+    // Create fixed attestation response payload
+    let attestation = Arc::new(AttestResponse {
+        attestation: attestation.map(|(quote, collateral)| Attestation { quote, collateral }),
+        report,
+    });
+
     let (router, api) = OpenApiRouter::with_openapi(ApiDoc::openapi())
-        .routes(routes!(health, signal))
+        .routes(routes!(health))
+        .routes(routes!(attest))
+        .routes(routes!(keyshare))
+        .routes(routes!(signal))
         .split_for_parts();
 
     let app = router
@@ -175,10 +183,12 @@ pub async fn spawn_api_server(
                 ]),
         )
         .with_state(AppState {
+            start_time: SystemTime::now(),
             is_bootstrap,
             read_only,
+            attestation,
             signal_tx,
-            start_time: SystemTime::now(),
+            keyshare_tx,
         });
 
     let listener = TcpListener::bind(("0.0.0.0", config.port)).await?;

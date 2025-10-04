@@ -23,20 +23,33 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
+    - uses: cachix/install-nix-action@v17
+    - uses: nicknovitski/nix-develop@v1
     - run: cargo fmt --check
 
   clippy:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
+    - uses: cachix/install-nix-action@v17
+    - uses: nicknovitski/nix-develop@v1
     - uses: Swatinem/rust-cache@v2
-    - run: cargo clippy -- -Dwarnings
+    - name: Check node
+      run: cargo clippy -- -Dwarnings
+    - name: Check node built with nosgx
+      run: cargo clippy --features nosgx -- -Dwarnings
+    - name: Check enclave
+      run: |
+        cargo clippy --target x86_64-fortanix-unknown-sgx \
+          -p nomad-enclave -- -Dwarnings
 
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
     - uses: actions/checkout@v4
+    - uses: cachix/install-nix-action@v17
+    - uses: nicknovitski/nix-develop@v1
     - uses: Swatinem/rust-cache@v2
     - run: cargo test --verbose
 
@@ -44,5 +57,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
+    - uses: cachix/install-nix-action@v17
+    - uses: nicknovitski/nix-develop@v1
     - uses: Swatinem/rust-cache@v2
-    - run: cargo build --release
+    - name: Build Node
+      run: cargo build --release
+    - name: Build Enclave
+      run: cargo build --target x86_64-fortanix-unknown-sgx -p nomad-enclave
