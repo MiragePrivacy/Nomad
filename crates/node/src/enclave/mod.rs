@@ -16,7 +16,7 @@ use tokio::{
     net::TcpStream,
     sync::mpsc::{UnboundedReceiver, UnboundedSender},
 };
-use tracing::info;
+use tracing::{info, trace};
 
 #[cfg(not(feature = "nosgx"))]
 mod quote;
@@ -123,7 +123,8 @@ impl EnclaveRunner {
             let mut enclave_builder = enclave_runner::EnclaveBuilder::new(&config.enclave_path);
             enclave_builder
                 .signature(&config.signature_path)?
-                .arg("127.0.0.1:8888");
+                .arg("127.0.0.1:8888")
+                .arg("info");
             let enclave = enclave_builder
                 .build(&mut device)
                 .map_err(|e| eyre::eyre!("Failed to build enclave: {e}"))?;
@@ -351,6 +352,7 @@ impl EnclaveRunner {
         let len = self.stream.read_u32().await? as usize;
         let mut payload = vec![0; len];
         self.stream.read_exact(&mut payload).await?;
+        trace!("Read {} byte report", payload.len());
 
         #[cfg(feature = "nosgx")]
         {
@@ -375,6 +377,7 @@ impl EnclaveRunner {
             let report = sgx_isa::Report::try_copy_from(&payload)
                 .context("failed to decode enclave report")?;
             let data = ReportBody::from(report.reportdata);
+            trace!("Report data: {data:?}");
 
             // Generate a quote for the report
             let (quote, collateral, _) = quote::get_quote_for_report(&self.aesm_client, &report)?;
