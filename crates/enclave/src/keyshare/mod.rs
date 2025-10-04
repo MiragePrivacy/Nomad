@@ -114,6 +114,8 @@ fn generate_attestation_for_key(
     // Generate an attestation report for the enclave public key and eoa debug mode
     #[cfg(target_env = "sgx")]
     let report = {
+        use color_eyre::eyre::ContextCompat;
+
         // Read and parse target info
         let mut len = [0; 4];
         stream.read_exact(&mut len)?;
