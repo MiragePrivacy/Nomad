@@ -18,9 +18,6 @@ use tokio::{
 };
 use tracing::{info, trace};
 
-#[cfg(not(feature = "nosgx"))]
-mod quote;
-
 /// Configuration for the enclave
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
