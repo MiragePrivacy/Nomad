@@ -343,7 +343,7 @@ impl EnclaveRunner {
         // The enclave will reuse this quote for bootstrapping new enclaves.
         self.read_report_and_reply_with_quote()
             .await
-            .context("failed to read report from enclave")
+            .context("failed to process report from enclave")
     }
 
     async fn read_report_and_reply_with_quote(
@@ -370,8 +370,42 @@ impl EnclaveRunner {
 
         #[cfg(not(feature = "nosgx"))]
         {
-            use eyre::ContextCompat;
+            use eyre::{ensure, ContextCompat};
             use serde_json::to_value;
+            use sgx_isa::Targetinfo;
+
+            fn get_algorithm_id(key_id: &[u8]) -> u32 {
+                const ALGORITHM_OFFSET: usize = 154;
+                let mut bytes: [u8; 4] = Default::default();
+                bytes.copy_from_slice(&key_id[ALGORITHM_OFFSET..ALGORITHM_OFFSET + 4]);
+                u32::from_le_bytes(bytes)
+            }
+
+            let key_ids = self
+                .aesm_client
+                .get_supported_att_key_ids()
+                .context("failed to get key ids")?;
+            let ecdsa_key_ids: Vec<_> = key_ids
+                .into_iter()
+                .filter(|id| nomad_dcap_quote::SGX_QL_ALG_ECDSA_P256 == get_algorithm_id(id))
+                .collect();
+            ensure!(
+                ecdsa_key_ids.len() == 1,
+                "Expected exactly one ECDSA attestation key, got {} key(s) instead",
+                ecdsa_key_ids.len()
+            );
+            let ecdsa_key_id = ecdsa_key_ids[0].to_vec();
+            let quote_info = self
+                .aesm_client
+                .init_quote_ex(ecdsa_key_id.clone())
+                .context("failed to get quote info")?;
+            let target_info = Targetinfo::try_copy_from(quote_info.target_info())
+                .context("Invalid target info")?;
+
+            // Send target info to enclave
+            let ti = target_info.as_ref().to_vec();
+            self.stream.write_u32(ti.len() as u32).await?;
+            self.stream.write_all(&ti).await?;
 
             // Read report and parse public key
             let report = sgx_isa::Report::try_copy_from(&payload)
@@ -380,15 +414,22 @@ impl EnclaveRunner {
             trace!("Report data: {data:?}");
 
             // Generate a quote for the report
-            let (quote, collateral, _) = quote::get_quote_for_report(&self.aesm_client, &report)?;
-            let collateral = to_value(collateral)?;
+            let quote = self
+                .aesm_client
+                .get_quote_ex(ecdsa_key_id, report.as_ref().to_vec(), None, vec![0; 16])
+                .map(|res| res.quote().to_vec())
+                .context("failed to get quote for report")?;
+            let collateral = nomad_dcap_quote::SgxQlQveCollateral::new(&quote)?;
+
             self.stream.write_u32(quote.len() as u32).await?;
             self.stream.write_all(&quote).await?;
+
             let collateral_bytes = serde_json::to_vec(&collateral)?;
             self.stream.write_u32(collateral_bytes.len() as u32).await?;
             self.stream.write_all(&collateral_bytes).await?;
 
-            Ok((data, Some((quote, collateral))))
+            let collateral = to_value(collateral)?;
+            Ok((data, Some((quote.into(), collateral))))
         }
     }
 }

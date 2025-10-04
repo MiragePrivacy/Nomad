@@ -114,10 +114,15 @@ fn generate_attestation_for_key(
     // Generate an attestation report for the enclave public key and eoa debug mode
     #[cfg(target_env = "sgx")]
     let report = {
-        let report = sgx_isa::Report::for_target(
-            &sgx_isa::Targetinfo::from(sgx_isa::Report::for_self()),
-            &data.into(),
-        );
+        // Read and parse target info
+        let mut len = [0; 4];
+        stream.read_exact(&mut len)?;
+        let mut ti = vec![0; u32::from_be_bytes(len) as usize];
+        stream.read_exact(&mut ti)?;
+        let target_info = sgx_isa::Targetinfo::try_copy_from(&ti).context("Invalid target info")?;
+
+        // Generate report
+        let report = sgx_isa::Report::for_target(&target_info, &data.into());
         let report: &[u8] = report.as_ref();
         report.to_vec()
     };
