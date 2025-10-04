@@ -1,12 +1,12 @@
-use std::net::SocketAddr;
+use std::{io::Read, net::SocketAddr};
 
 use color_eyre::{
-    eyre::{eyre, Context},
+    eyre::{bail, eyre, Context, ContextCompat},
     Result,
 };
+use log::trace;
 use serde::{Deserialize, Serialize};
 use ureq::{
-    tls::TlsConfig,
     unversioned::{resolver::Resolver, transport::DefaultConnector},
     Agent,
 };
@@ -64,18 +64,16 @@ impl Resolver for FixedResolver {
 
 impl RpcClient {
     pub fn new(host: String, dest: SocketAddr, _expected_cert: Option<String>) -> Self {
-        let tls_config = TlsConfig::builder()
-            // TODO: build root certificate store with expected cert
-            .build();
-
         let url = format!("https://{host}:{}", dest.port());
 
         // Build the request agent
         let agent = Agent::with_parts(
-            Agent::config_builder().tls_config(tls_config).build(),
+            Agent::config_builder().build(),
             DefaultConnector::new(),
             FixedResolver { host, dest },
         );
+
+        trace!("Initialized RPC client for {url}");
 
         Self { url, agent }
     }
@@ -85,6 +83,7 @@ impl RpcClient {
         method: &'static str,
         params: impl Serialize,
     ) -> Result<R> {
+        trace!("POST {method}");
         let request = JsonRpcRequest {
             jsonrpc: "2.0",
             method,
@@ -96,10 +95,25 @@ impl RpcClient {
             .agent
             .post(&self.url)
             .send_json(&request)
-            .context("Failed to send RPC request")?
-            .body_mut()
-            .read_json::<JsonRpcResponse<R>>()
-            .context("Failed to parse RPC response")?;
+            .context("Failed to send RPC request")?;
+        trace!("Sent RPC request");
+        let (parts, body) = response.into_parts();
+        let len: usize = parts
+            .headers
+            .get("content-length")
+            .context("missing content-length header")?
+            .to_str()?
+            .parse()?;
+        // Reject >1MB
+        if len > 1024 * 1024 * 1024 {
+            bail!("Response too large");
+        }
+        let mut buf = vec![0; len];
+        let mut reader = body.into_reader();
+        reader.read_exact(&mut buf)?;
+        let response: JsonRpcResponse<R> =
+            serde_json::from_slice(&buf).context("Failed to parse RPC response")?;
+        trace!("Got RPC reponse");
 
         if let Some(error) = response.error {
             return Err(eyre!("RPC error {}: {}", error.code, error.message));

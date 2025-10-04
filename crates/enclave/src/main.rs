@@ -1,20 +1,11 @@
 use color_eyre::eyre::ContextCompat;
+use env_logger::Env;
 use nomad_enclave::Enclave;
-use tracing_subscriber::EnvFilter;
 
 pub fn main() -> color_eyre::Result<()> {
-    println!("Enclave started");
-    // Parse args
+    color_eyre::install()?;
     let mut args = std::env::args().skip(1);
     let addr = args.next().context("Missing control socket addr arg")?;
-    let filter = args.next().unwrap_or("info".to_string());
-
-    // Init tracing
-    tracing_subscriber::fmt()
-        .compact()
-        .with_env_filter(EnvFilter::new(filter))
-        .init();
-
-    // Init and run enclave
+    env_logger::init_from_env(Env::new().default_filter_or("nomad_enclave=trace,debug"));
     Enclave::init(&addr)?.run()
 }

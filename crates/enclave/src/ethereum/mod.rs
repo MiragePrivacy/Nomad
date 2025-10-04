@@ -13,13 +13,13 @@ use color_eyre::{
     eyre::{bail, Context, ContextCompat},
     Result,
 };
+use log::{info, trace};
 use nomad_types::{
     primitives::{Address, Bytes, TxHash, U256},
     Signal,
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{info, trace};
 use contracts::{Escrow, IERC20};
 
 mod buildernet;
@@ -69,15 +69,18 @@ impl EthClient {
     pub fn new(keys: Vec<PrivateKeySigner>, config: EthConfig) -> Result<Self> {
         let accounts: Vec<Address> = keys.iter().map(|s| s.address()).collect();
         let geth = geth::GethClient::new(config.geth_rpc, config.geth_rpc_host)?;
+        trace!("Initialized GETH client");
         let bn = buildernet::BuildernetClient::new(
             config.builder_atls,
             config.builder_rpc,
             config.builder_rpc_host,
         )?;
+        trace!("Initialized BuilderNet client");
         let min_eth = parse_ether(&config.min_eth.to_string())?;
 
         // Fetch chain_id from geth
         let chain_id = geth.get_chain_id()?;
+        trace!("Got chain id");
 
         // Load nonces for all accounts
         let mut nonces = HashMap::new();
@@ -85,6 +88,7 @@ impl EthClient {
             let nonce = geth.get_transaction_count(account)?;
             nonces.insert(account, nonce);
         }
+        trace!("Initialized account nonces");
 
         Ok(Self {
             keys,

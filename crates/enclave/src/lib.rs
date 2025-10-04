@@ -10,8 +10,8 @@ use color_eyre::{
     Result,
 };
 use ecies::SecretKey;
+use log::{error, info, trace, warn};
 use nomad_types::Signal;
-use tracing::instrument;
 
 use crate::{
     ethereum::{EthClient, EthConfig},
@@ -23,52 +23,6 @@ mod ethereum;
 mod keyshare;
 mod sealing;
 
-#[macro_export]
-macro_rules! trace {
-    ($($arg:tt)*) => {{
-        #[cfg(target_env = "sgx")]
-        println!($($arg)*);
-        #[cfg(not(target_env = "sgx"))]
-        tracing::trace!( $( $arg )*);
-    }};
-}
-#[macro_export]
-macro_rules! debug {
-    ($($arg:tt)*) => {{
-        #[cfg(target_env = "sgx")]
-        println!($($arg)*);
-        #[cfg(not(target_env = "sgx"))]
-        tracing::debug!( $( $arg )*);
-    }};
-}
-#[macro_export]
-macro_rules! info {
-    ($($arg:tt)*) => {{
-        #[cfg(target_env = "sgx")]
-        println!($($arg)*);
-        #[cfg(not(target_env = "sgx"))]
-        tracing::info!( $( $arg )*);
-    }};
-}
-#[macro_export]
-macro_rules! warn {
-    ($($arg:tt)*) => {{
-        #[cfg(target_env = "sgx")]
-        eprintln!($($arg)*);
-        #[cfg(not(target_env = "sgx"))]
-        tracing::warn!( $( $arg )*);
-    }};
-}
-#[macro_export]
-macro_rules! error {
-    ($($arg:tt)*) => {{
-        #[cfg(target_env = "sgx")]
-        eprintln!($($arg)*);
-        #[cfg(not(target_env = "sgx"))]
-        tracing::error!( $( $arg )*);
-    }};
-}
-
 pub struct Enclave {
     keyshare: KeyshareServer,
     eth_client: EthClient,
@@ -77,7 +31,6 @@ pub struct Enclave {
 }
 
 impl Enclave {
-    #[instrument(skip_all)]
     pub fn init(addr: &str) -> color_eyre::Result<Self> {
         // Setup crypto provider
         rustls_rustcrypto::provider()
@@ -100,12 +53,16 @@ impl Enclave {
         let config =
             EthConfig::read_from_stream(&mut stream).context("Failed to read enclave config")?;
 
+        trace!("Initialized ethereum config");
+
         // Create eth client and prefetch attestated tls certificates
         let eth_client = ethereum::EthClient::new(keys, config)?;
+        trace!("Initialized ethereum client");
 
         // Fetch, generate, or unseal the global secret
         let (secret, public, quote, collateral) =
             keyshare::initialize_global_secret(&mut stream, is_debug, eth_client.chain_id())?;
+        trace!("Initialized global secret");
 
         info!(
             "Global Enclave Key: 0x{}",
@@ -120,8 +77,6 @@ impl Enclave {
         })
     }
 
-    /// Main thread loop
-    #[instrument(name = "enclave", skip_all)]
     pub fn run(mut self) -> Result<()> {
         loop {
             let mut kind = [0];
@@ -135,12 +90,10 @@ impl Enclave {
         }
     }
 
-    #[instrument(name = "keyshare", skip_all)]
     fn handle_keyshare_request(&mut self) -> Result<()> {
         self.keyshare.handle_request(&mut self.stream, &self.secret)
     }
 
-    #[instrument(name = "signal", skip_all)]
     fn handle_signal_request(&mut self) -> Result<()> {
         // Read u32 length prefixed signal payload from the stream
         let mut len = [0u8; 4];
@@ -172,7 +125,6 @@ impl Enclave {
         Ok(())
     }
 
-    #[instrument(name = "execute", skip_all, fields(signal.token_contract))]
     fn execute_signal(&mut self, signal: Signal) -> Result<()> {
         let stream = &mut self.stream;
         self.eth_client.validate_signal(&signal)?;

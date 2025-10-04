@@ -7,13 +7,11 @@ use color_eyre::{
     Result,
 };
 use nomad_types::primitives::{Address, Bloom, Bytes, Log, LogData, TxHash, B256, U256};
-use tracing::instrument;
 
 use super::contracts::Escrow;
 
 impl super::EthClient {
     /// Generate a Merkle proof for a transfer transaction receipt
-    #[instrument(skip_all)]
     pub fn generate_proof(
         &self,
         transfer_tx: TxHash,

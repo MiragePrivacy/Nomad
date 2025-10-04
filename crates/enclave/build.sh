@@ -6,7 +6,7 @@ cd $ROOT
 
 # We compute the number of threads dynamically from spawn calls in the code.
 # The build script is included for counting the main thread.
-THREADS=1
+THREADS=4
 STACK_SIZE=0x200000 # 2 MiB (rust default)
 HEAP_SIZE=0x20000000 # 512 MiB
 

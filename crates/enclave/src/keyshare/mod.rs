@@ -8,10 +8,10 @@ use color_eyre::{
     Result,
 };
 use ecies::{PublicKey, SecretKey};
+use log::{error, trace};
 use nomad_types::ReportBody;
 use sgx_isa::Keypolicy;
 
-use crate::error;
 use crate::sealing::derive_ecies_key;
 use client::KeyshareClient;
 pub use server::KeyshareServer;
@@ -35,6 +35,7 @@ pub fn initialize_global_secret(
     is_debug: bool,
     chain_id: u64,
 ) -> Result<(SecretKey, PublicKey, Vec<u8>, Vec<u8>)> {
+    trace!("Initializing global secret");
     let mut mode = [0];
     stream.read_exact(&mut mode)?;
     let (secret, public) = match mode[0] {
@@ -50,6 +51,7 @@ pub fn initialize_global_secret(
             let len = (sealed_key.len() as u32).to_be_bytes();
             stream.write_all(&len)?;
             stream.write_all(&sealed_key)?;
+            trace!("Generated global secret");
             (secret, public)
         }
         // Peer bootstrap
@@ -123,6 +125,8 @@ fn generate_attestation_for_key(
     // If we're running the enclave without sgx, just send the report data directly
     #[cfg(not(target_env = "sgx"))]
     let report: [u8; 64] = data.into();
+
+    trace!("Generated {} byte report", report.len());
 
     let len = (report.len() as u32).to_be_bytes();
     stream.write_all(&len)?;
