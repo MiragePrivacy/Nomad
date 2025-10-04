@@ -161,18 +161,9 @@ impl EnclaveRunner {
             .await
             .context("failed to initialize EOA keys")?;
 
-        // Send ethereum config
-        let payload = serde_json::to_vec(&json!({
-            "geth_rpc": self.config.geth_rpc.as_str().to_socket_addrs().unwrap().next(),
-            "geth_rpc_host": self.config.geth_rpc.host_str().unwrap(),
-            "builder_rpc": self.config.builder_rpc.as_str().to_socket_addrs().unwrap().next(),
-            "builder_rpc_host": self.config.builder_rpc.host_str().unwrap(),
-            "builder_atls": self.config.builder_atls.as_str().to_socket_addrs().unwrap().next(),
-            "min_eth": 0.05
-        }))
-        .unwrap();
-        self.stream.write_u32(payload.len() as u32).await?;
-        self.stream.write_all(&payload).await?;
+        self.init_eth_config()
+            .await
+            .context("failed to init ethereum config")?;
 
         let response = self
             .init_global_key()
@@ -283,6 +274,27 @@ impl EnclaveRunner {
         //     write.write_all(&data).await?;
         // }
 
+        Ok(())
+    }
+
+    async fn init_eth_config(&mut self) -> Result<()> {
+        let geth_host = self.config.geth_rpc.host_str().unwrap();
+        let geth_port = self.config.geth_rpc.port_or_known_default().unwrap();
+        let builder_host = self.config.builder_rpc.host_str().unwrap();
+        let builder_port = self.config.builder_rpc.port_or_known_default().unwrap();
+
+        // Send ethereum config
+        let payload = serde_json::to_vec(&json!({
+            "geth_rpc": format!("{geth_host}:{geth_port}").to_socket_addrs().unwrap().next(),
+            "geth_rpc_host": geth_host,
+            "builder_rpc": format!("{builder_host}:{builder_port}").to_socket_addrs().unwrap().next(),
+            "builder_rpc_host": builder_host,
+            "builder_atls": "127.0.0.1:1",
+            "min_eth": 0.05
+        }))
+        .unwrap();
+        self.stream.write_u32(payload.len() as u32).await?;
+        self.stream.write_all(&payload).await?;
         Ok(())
     }
 
