@@ -116,12 +116,16 @@ fn generate_attestation_for_key(
     let report = {
         use color_eyre::eyre::ContextCompat;
 
+        trace!("Reading target info");
+
         // Read and parse target info
         let mut len = [0; 4];
         stream.read_exact(&mut len)?;
         let mut ti = vec![0; u32::from_be_bytes(len) as usize];
+        trace!("Reading {} bytes", ti.len());
         stream.read_exact(&mut ti)?;
         let target_info = sgx_isa::Targetinfo::try_copy_from(&ti).context("Invalid target info")?;
+        trace!("Got target info");
 
         // Generate report
         let report = sgx_isa::Report::for_target(&target_info, &data.into());
